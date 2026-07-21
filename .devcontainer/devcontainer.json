@@ -1,0 +1,14 @@
+{
+  "name": "Deep Dig",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "postCreateCommand": "npm install",
+  "forwardPorts": [5184],
+  "portsAttributes": {
+    "5184": { "label": "Deep Dig dev server", "onAutoForward": "openBrowser" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint"]
+    }
+  }
+}

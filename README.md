@@ -51,6 +51,21 @@ npm run dev
 
 Open http://localhost:5184 and click the page once so it has keyboard focus.
 
+## Play it online
+
+Deployed automatically to GitHub Pages — **https://davidgrgic89.github.io/deep-dig/**.
+Every push to `main` rebuilds and republishes in ~1–2 minutes.
+
+## Edit it online (no PC needed)
+
+- **Quick tweaks:** open the repo on github.com and press `.` (or go to
+  [github.dev](https://github.dev/davidgrgic89/deep-dig)) for a browser code
+  editor. Commit a change and the live site updates itself.
+- **Full dev in the browser:** on github.com click **Code → Codespaces →
+  Create codespace**. It auto-runs `npm install` (see `.devcontainer/`); then in
+  its terminal run `npm run dev` and open the forwarded port 5184 to play with
+  live reload — all from any device, no local PC required.
+
 ## Controls
 
 | Key | Action |

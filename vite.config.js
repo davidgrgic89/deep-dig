@@ -8,6 +8,7 @@ export default defineConfig(({ command }) => ({
     port: 5184,
     strictPort: true,
     host: true, // listen on the LAN so a phone/tablet on the same Wi-Fi can connect
+    allowedHosts: true, // also accept Codespaces / github.dev forwarded hostnames
   },
   build: {
     chunkSizeWarningLimit: 2000,

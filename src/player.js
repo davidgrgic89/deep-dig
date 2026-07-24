@@ -53,6 +53,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.setDepth(10);
 
     this.facing = 1;
+    this.texKey = 'player';
     this.lastGroundedAt = -9999;
     this.jumpPressedAt = -9999;
     this.jumpCutDone = true;
@@ -284,7 +285,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   spawnGhost() {
-    const g = this.scene.add.image(this.x, this.y, 'player', this.frame.name)
+    const g = this.scene.add.image(this.x, this.y, this.texKey, this.frame.name)
       .setFlipX(this.flipX).setDepth(9).setAlpha(0.45).setTint(0xffc86a);
     this.scene.tweens.add({ targets: g, alpha: 0, duration: 180, onComplete: () => g.destroy() });
   }
@@ -321,15 +322,22 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     return true;
   }
 
+  // swap outfit (e.g. the fireproof suit) — texture + matching walk anim
+  setSkin(key) {
+    this.texKey = key;
+    this.setTexture(key, this.frame.name);
+  }
+
   updateAnim(onGround) {
     this.setFlipX(this.facing === -1);
+    const walk = `${this.texKey || 'player'}-walk`;
     if (this.climbing) {
-      this.anims.play('player-walk', true);
+      this.anims.play(walk, true);
     } else if (!onGround) {
       this.anims.stop();
       this.setFrame(4);
     } else if (Math.abs(this.body.velocity.x) > 10) {
-      this.anims.play('player-walk', true);
+      this.anims.play(walk, true);
     } else {
       this.anims.stop();
       this.setFrame(0);

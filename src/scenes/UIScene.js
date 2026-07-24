@@ -86,6 +86,7 @@ export default class UIScene extends Phaser.Scene {
       { id: 'dash', x: 690, y: 386, r: 28, label: 'DASH', color: 0x9a5ac0, ability: 'dash' },
       { id: 'bomb', x: 730, y: 320, r: 28, label: 'BOMB', color: 0xd0562e, ability: 'dynamite' },
       { id: 'ladder', x: 636, y: 330, r: 26, label: 'LADR', color: 0x4a8a5a, ability: 'ladder' },
+      { id: 'water', x: 690, y: 300, r: 28, label: 'WATER', color: 0x3a8ac0, ability: 'waterGun' },
       // always-available: hold to recall to town
       { id: 'recall', x: 876, y: 300, r: 26, label: 'HOME', color: 0x3a6a9a },
     ];
@@ -153,6 +154,7 @@ export default class UIScene extends Phaser.Scene {
       if (b.ability === 'dash' && powers.dash) this.enabled.add(b.id);
       if (b.ability === 'dynamite' && powers.dynamite && (r.get('dynamite') || 0) > 0) this.enabled.add(b.id);
       if (b.ability === 'ladder' && (r.get('ropeLadders') || 0) > 0) this.enabled.add(b.id);
+      if (b.ability === 'waterGun' && (r.get('upgrades') || {}).waterGun) this.enabled.add(b.id);
     }
   }
 
@@ -212,6 +214,7 @@ export default class UIScene extends Phaser.Scene {
         if (just('dash')) t.dashPressed = true;
         if (just('bomb')) t.dynaPressed = true;
         if (just('ladder')) t.ladderPressed = true;
+        if (just('water')) t.waterPressed = true;
       }
     }
     this.prevPressed = pressed;
@@ -333,7 +336,8 @@ export default class UIScene extends Phaser.Scene {
     this.stock = stock;
     this.sel = Math.min(this.sel || 0, stock.length - 1);
     const rows = stock.length;
-    const title = stock._east ? "YUKI'S FROST EMPORIUM" : "MARA'S TRADING POST";
+    const title = stock._kind === 'lava' ? "CINDER'S FORGE"
+      : stock._kind === 'east' ? "YUKI'S FROST EMPORIUM" : "MARA'S TRADING POST";
     const { x, y, w, h } = this.panelBox(580, 132 + rows * 26, title);
     this.add.text(0, 0, '');
     const r = this.registry;
@@ -402,10 +406,10 @@ export default class UIScene extends Phaser.Scene {
   showWin({ coins, orbs }) {
     this.clearPanel();
     this.mode = 'won';
-    const { x, y, h } = this.panelBox(640, 300, 'THE SUN CROWN');
+    const { x, y, h } = this.panelBox(660, 300, 'THE HEART OF THE VOLCANO');
     const body = this.add.text(x, y - 30,
-      'You lift the Sun Crown from the Frozen Throne.\n\n' +
-      'From the desert to the deepest ice, no digger\never came so far. Two worlds will sing your name.\n\n' +
+      'You tear the molten Heart from the Inferno Deep.\n\n' +
+      'Desert, ice, and fire — three worlds conquered.\nNo digger in any age came half so far.\n\n' +
       `coins: $${coins}    orbs: ${orbs}`,
       { ...TXT(9), align: 'center', lineSpacing: 6 }).setOrigin(0.5);
     const foot = this.add.text(x, y + h / 2 - 24, 'ESC — keep exploring your world', TXT(8, '#b8b09a')).setOrigin(0.5);

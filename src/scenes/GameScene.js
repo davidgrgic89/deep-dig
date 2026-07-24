@@ -5,11 +5,12 @@ import { Enemy, makeEnemyAnims } from '../enemies.js';
 import { Boulder } from '../boulder.js';
 import { TILE, TILE_INFO, ORES } from '../art.js';
 import {
-  T, W, H, SURFACE, SHAFT_X, SHAFT_X2, DIVIDER, ZONES, ZONES_R, IDOL_ROW,
+  T, W, H, SURFACE, SHAFT_X, SHAFT_X2, SHAFT_X3, DIVIDER, DIVIDER2,
+  ZONES, ZONES_R, ZONES_L, IDOL_ROW,
   generateWorld, zoneOfRow, regionOfX, zoneName, bgTileAt,
 } from '../world.js';
 
-const SAVE_KEY = 'deepdig-save-v1';
+const SAVE_KEY = 'deepdig-save-v2';
 
 // little effects helper -----------------------------------------------------
 class FX {
@@ -54,12 +55,14 @@ export default class GameScene extends Phaser.Scene {
   create() {
     this.fx = new FX(this);
     makeEnemyAnims(this);
-    if (!this.anims.exists('player-walk')) {
-      this.anims.create({
-        key: 'player-walk',
-        frames: [0, 1, 2, 3].map((f) => ({ key: 'player', frame: f })),
-        frameRate: 10, repeat: -1,
-      });
+    for (const tex of ['player', 'player_fire']) {
+      if (!this.anims.exists(`${tex}-walk`)) {
+        this.anims.create({
+          key: `${tex}-walk`,
+          frames: [0, 1, 2, 3].map((f) => ({ key: tex, frame: f })),
+          frameRate: 10, repeat: -1,
+        });
+      }
     }
 
     this.uiOpen = false;
@@ -74,7 +77,7 @@ export default class GameScene extends Phaser.Scene {
     this.registry.set('touch', {
       left: false, right: false, up: false, down: false,
       jump: false, jumpPressed: false, dig: false, use: false, usePressed: false,
-      dashPressed: false, dynaPressed: false, ladderPressed: false, recall: false,
+      dashPressed: false, dynaPressed: false, ladderPressed: false, waterPressed: false, recall: false,
     });
 
     this.initState();
@@ -88,8 +91,10 @@ export default class GameScene extends Phaser.Scene {
     // player
     const spawn = this.registry.get('spawnPoint');
     this.player = new Player(this, spawn.x, spawn.y);
+    this.player.setSkin(this.registry.get('skin') || 'player');
     this.physics.add.collider(this.player, this.layer);
     this.player.body.setCollideWorldBounds(true);
+    this.lavaHurtAt = 0;
 
     // enemies
     this.enemies = this.add.group();
@@ -123,6 +128,10 @@ export default class GameScene extends Phaser.Scene {
     this.physics.add.overlap(this.player, this.globs, (pl, g) => {
       this.splat(g); this.damagePlayer(g.x, 1);
     });
+    // water-gun jets — cool HOTROCK (solid) on contact; LAVA (non-colliding) is
+    // handled per-frame in update() since the jet passes through it.
+    this.waterJets = this.physics.add.group({ allowGravity: false });
+    this.physics.add.collider(this.waterJets, this.layer, (jet, tile) => this.waterHitsTile(jet, tile));
 
     // camera
     this.cameras.main.setBounds(0, 0, W * T, H * T);
@@ -159,8 +168,11 @@ export default class GameScene extends Phaser.Scene {
     d('openGates', []);         // gate keys opened (e.g. 'r0z1')
     d('takenShrines', []); d('takenStones', []); d('takenChests', []);
     d('carriedStones', []);     // gate keys of stones in pocket, not yet used
-    d('rightUnlocked', false);  // has the Idol opened the Rift east?
-    d('idolClaimed', false);
+    d('rightUnlocked', false);  // has the Idol opened the Rift east (frost)?
+    d('lavaUnlocked', false);   // has the Crown opened the Ember Rift west (lava)?
+    d('idolClaimed', false); d('crownClaimed', false); d('heartClaimed', false);
+    d('dungeonKeys', 0);        // keys picked up for the lava dungeon
+    d('skin', 'player');        // 'player' | 'player_fire' (fireproof suit)
     d('deathStash', null);      // {x,y,items:[...]} loot dropped on death
     d('placedPortals', []);     // [{x,y}] teleporter kits placed
     d('dugTiles', []);          // indices of removed tiles
@@ -178,7 +190,8 @@ export default class GameScene extends Phaser.Scene {
       'dynamite', 'teleKits', 'upgrades', 'openGates', 'takenShrines', 'takenStones',
       'takenChests', 'carriedStones', 'placedPortals', 'dugTiles',
       'activatedCheckpoints', 'respawnPoint', 'ropeLadders', 'rightUnlocked',
-      'idolClaimed', 'deathStash']) data[k] = r.get(k);
+      'idolClaimed', 'deathStash', 'lavaUnlocked', 'crownClaimed', 'heartClaimed',
+      'dungeonKeys', 'skin']) data[k] = r.get(k);
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch { /* storage full/blocked */ }
   }
 
@@ -208,7 +221,7 @@ export default class GameScene extends Phaser.Scene {
         if (t !== TILE.EMPTY) this.layer.putTileAt(t, x, y);
       }
     }
-    this.layer.setCollisionByExclusion([-1, TILE.LADDER, TILE.SPIKE]);
+    this.layer.setCollisionByExclusion([-1, TILE.LADDER, TILE.SPIKE, TILE.LAVA]);
   }
 
   buildSky() {
@@ -256,68 +269,63 @@ export default class GameScene extends Phaser.Scene {
   }
 
   buildTown() {
-    const gy = SURFACE * T; // ground top in px
-    // ---- west town (Sundrop Flats) ----
+    this.npcs = [];
+    // desert (start), frost (east), lava (west) districts, each around its shaft
+    this.townPortal = this.buildDistrict({
+      shaft: SHAFT_X, tint: 0xffffff, portalName: 'Sundrop Town', portalTint: 0xd0e8ff,
+      people: [['npc_mara', 'Mara', 'shop'], ['npc_gus', 'Gus', 'gus'], ['npc_mayor', 'Mayor Bell', 'mayor']],
+    });
+    this.eastPortal = this.buildDistrict({
+      shaft: SHAFT_X2, tint: 0x9fc4e6, portalName: 'Frosthaven Town', portalTint: 0xdff0ff,
+      people: [['npc_mara', 'Yuki', 'shopEast'], ['npc_gus', 'Frostbeard', 'gusEast'], ['npc_mayor', 'Elder Pyra', 'mayorEast']],
+    });
+    this.lavaPortal = this.buildDistrict({
+      shaft: SHAFT_X3, tint: 0xe0906a, portalName: 'Cinder Reach', portalTint: 0xffb070,
+      people: [['npc_mara', 'Cinder', 'shopLava'], ['npc_gus', 'Slag', 'gusLava'], ['npc_mayor', 'Warden Ash', 'mayorLava']],
+    });
+
+    // two rifts + the map-edge signs
+    this.riftFrost = this.buildRift(DIVIDER, 'rightUnlocked', 0xb07aff, 'THE RIFT', 'SEALED\nRIFT');
+    this.riftLava = this.buildRift(DIVIDER2, 'lavaUnlocked', 0xff7a2a, 'EMBER RIFT', 'SEALED\nEMBER RIFT');
+  }
+
+  buildDistrict({ shaft, tint, portalName, portalTint, people }) {
+    const gy = SURFACE * T;
     const props = [
-      ['bldg_house', 6 * T, 0], ['bldg_shop', 12.5 * T, 0], ['cactus', 2.2 * T, 0],
-      ['cactus', 34 * T, 0], ['barrel', 16.4 * T, 0], ['barrel', 17.2 * T, 0],
-      ['lamppost', 20 * T, 0], ['lamppost', 28.5 * T, 0], ['minehead', SHAFT_X * T + 8, 4],
-      ['bldg_house', 39 * T, 0],
+      ['bldg_house', (shaft - 11) * T, 0], ['bldg_shop', (shaft - 5) * T, 0],
+      ['barrel', (shaft - 8) * T, 0], ['lamppost', (shaft - 12.5) * T, 0],
+      ['lamppost', (shaft + 5) * T, 0], ['minehead', shaft * T + 8, 4],
+      ['bldg_house', (shaft + 9) * T, 0],
     ];
     for (const [key, x, dy] of props) {
-      const img = this.add.image(x, gy + dy, key).setOrigin(0.5, 1).setDepth(2);
+      const img = this.add.image(x, gy + dy, key).setOrigin(0.5, 1).setDepth(2).setTint(tint);
       if (key === 'minehead') img.setDepth(4);
     }
-    this.npcs = [
-      this.makeNpc('npc_mara', 14.2 * T, gy, 'Mara', 'shop'),
-      this.makeNpc('npc_gus', 21.5 * T, gy, 'Gus', 'gus'),
-      this.makeNpc('npc_mayor', 38 * T, gy, 'Mayor Bell', 'mayor'),
-    ];
-    this.townPortal = { name: 'Sundrop Town', x: (SHAFT_X - 4) * T, y: gy };
-    this.add.image(this.townPortal.x, gy - 1, 'portal').setOrigin(0.5, 1).setDepth(2).setTint(0xd0e8ff);
-    this.portalGlow(this.townPortal.x, gy - 18, 0x48b8f0);
-
-    this.buildEastDistrict(gy);
-    this.buildRift(gy);
+    const at = [-5, 2, 9];
+    people.forEach(([spr, name, dialog], i) => {
+      this.npcs.push(this.makeNpc(spr, (shaft + at[i]) * T, gy, name, dialog, tint));
+    });
+    const portal = { name: portalName, x: (shaft - 3) * T, y: gy };
+    this.add.image(portal.x, gy - 1, 'portal').setOrigin(0.5, 1).setDepth(2).setTint(portalTint);
+    this.portalGlow(portal.x, gy - 18, portalTint);
+    return portal;
   }
 
-  // The frozen town across the Rift — reachable only after the Idol is claimed.
-  buildEastDistrict(gy) {
-    const frost = 0x9fc4e6;
-    const props = [
-      ['bldg_house', 58 * T, 0], ['bldg_shop', 66 * T, 0], ['bldg_house', 84 * T, 0],
-      ['barrel', 70.4 * T, 0], ['lamppost', 62 * T, 0], ['lamppost', 80 * T, 0],
-      ['minehead', SHAFT_X2 * T + 8, 4],
-    ];
-    for (const [key, x, dy] of props) {
-      const img = this.add.image(x, gy + dy, key).setOrigin(0.5, 1).setDepth(2).setTint(frost);
-      if (key === 'minehead') img.setDepth(4);
-    }
-    this.npcs.push(
-      this.makeNpc('npc_mara', 65.5 * T, gy, 'Yuki', 'shopEast', frost),
-      this.makeNpc('npc_gus', 71.5 * T, gy, 'Frostbeard', 'gusEast', frost),
-      this.makeNpc('npc_mayor', 84 * T, gy, 'Elder Pyra', 'mayorEast', frost),
-    );
-    this.eastPortal = { name: 'Frosthaven Town', x: (SHAFT_X2 - 4) * T, y: gy };
-    this.add.image(this.eastPortal.x, gy - 1, 'portal').setOrigin(0.5, 1).setDepth(2).setTint(0xdff0ff);
-    this.portalGlow(this.eastPortal.x, gy - 18, 0x8fe0ff);
+  buildRift(col, unlockKey, tint, openLabel, sealedLabel) {
+    const gy = SURFACE * T, x = col * T;
+    const unlocked = this.registry.get(unlockKey);
+    const gate = this.add.image(x, gy - 1, 'portal').setOrigin(0.5, 1).setDepth(3)
+      .setScale(1.4).setTint(unlocked ? tint : 0x4a4458);
+    const glow = this.portalGlow(x, gy - 26, tint);
+    glow.setVisible(unlocked);
+    const sign = this.add.text(x, gy - 44, unlocked ? openLabel : sealedLabel, {
+      fontFamily: '"Press Start 2P"', fontSize: '7px', color: unlocked ? '#f0c0a0' : '#8a94a2',
+      align: 'center', lineSpacing: 4, stroke: '#1a1420', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(6);
+    return { col, unlockKey, tint, openLabel, gate, glow, sign, wall: null };
   }
 
-  buildRift(gy) {
-    const x = DIVIDER * T;
-    const unlocked = this.registry.get('rightUnlocked');
-    this.riftGate = this.add.image(x, gy - 1, 'portal').setOrigin(0.5, 1).setDepth(3)
-      .setScale(1.4).setTint(unlocked ? 0xc89aff : 0x4a4458);
-    this.riftGlow = this.portalGlow(x, gy - 26, 0xb07aff);
-    this.riftGlow.setVisible(unlocked);
-    this.riftSign = this.add.text(x, gy - 44,
-      unlocked ? 'THE RIFT' : 'SEALED\nRIFT', {
-        fontFamily: '"Press Start 2P"', fontSize: '7px', color: unlocked ? '#d0a8ff' : '#8a94a2',
-        align: 'center', lineSpacing: 4, stroke: '#1a1420', strokeThickness: 3,
-      }).setOrigin(0.5).setDepth(6);
-  }
-
-  // Invisible walls at the map edges + the Rift (until it's opened).
+  // Invisible walls at the map edges + both rifts (until opened).
   buildBarriers() {
     this.barriers = this.physics.add.staticGroup();
     const addWall = (cx, h = H * T, cy = (H * T) / 2) => {
@@ -328,13 +336,14 @@ export default class GameScene extends Phaser.Scene {
     };
     addWall(0.9 * T);
     addWall((W - 0.9) * T);
-    // Rift wall blocks the surface crossing until the Idol opens it
-    if (!this.registry.get('rightUnlocked')) {
-      this.riftWall = addWall(DIVIDER * T, (SURFACE + 4) * T, (SURFACE + 2) * T);
+    for (const rift of [this.riftFrost, this.riftLava]) {
+      if (!this.registry.get(rift.unlockKey)) {
+        rift.wall = addWall(rift.col * T, (SURFACE + 4) * T, (SURFACE + 2) * T);
+      }
     }
     this.physics.add.collider(this.player, this.barriers);
     this.physics.add.collider(this.enemies, this.barriers, undefined, (e) => e.type !== 'wraith' && e.type !== 'crawler', this);
-    this.makeSign(2.4 * T, 'DANGER\nZONE', 0xe85c5c);
+    this.makeSign(2.4 * T, 'MOLTEN\nWASTES', 0xff7a2a);
     this.makeSign((W - 2.4) * T, 'FROZEN\nWASTES', 0x8fd8ff);
   }
 
@@ -430,24 +439,50 @@ export default class GameScene extends Phaser.Scene {
     });
 
     // gates & portals network
-    this.portals = [this.townPortal, this.eastPortal];
+    this.portals = [this.townPortal, this.eastPortal, this.lavaPortal];
     this.gateSprites = [];
     for (const gate of this.world.gates) {
       if (this.registry.get('openGates').includes(gate.key)) this.addGatePortal(gate);
     }
     for (const p of this.registry.get('placedPortals')) this.addPlacedPortal(p.x, p.y, false);
 
-    // the Golden Idol (west finale) and the Sun Crown (east / true finale)
-    this.idol = this.add.image(this.world.idol.x * T + 8, this.world.idol.y * T + 14, 'idol')
-      .setOrigin(0.5, 1).setDepth(5).setVisible(!this.registry.get('idolClaimed'));
-    if (this.idol.visible) {
-      this.tweens.add({ targets: this.idol, y: this.idol.y - 2, duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
-      this.portalGlow(this.idol.x, this.idol.y - 14, 0xf2d75c);
+    // finales: Golden Idol (desert), Sun Crown (frost), Heart of the Volcano (lava)
+    const finale = (data, key, tint, claimed) => {
+      const spr = this.add.image(data.x * T + 8, data.y * T + 14, key)
+        .setOrigin(0.5, 1).setDepth(5).setVisible(!claimed);
+      if (spr.visible) {
+        this.tweens.add({ targets: spr, y: spr.y - 2, duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+        this.portalGlow(spr.x, spr.y - 14, tint);
+      }
+      return spr;
+    };
+    this.idol = finale(this.world.idol, 'idol', 0xf2d75c, this.registry.get('idolClaimed'));
+    this.crown = finale(this.world.crown, 'crown', 0xbfe9ff, this.registry.get('crownClaimed'));
+    this.heart = finale(this.world.heart, 'boulder', 0xff6a2a, this.registry.get('heartClaimed'));
+    this.heart.setTint(0xff5a2a).setScale(1.2); // Heart of the Volcano (glowing molten core)
+
+    // dungeon keys, the key-door, and the fireproof suit
+    this.keySprites = [];
+    for (const k of (this.world.keys || [])) {
+      const px = k.x * T + 8, py = k.y * T + 10;
+      const spr = this.add.image(px, py, 'key').setDepth(5);
+      this.tweens.add({ targets: spr, y: py - 3, duration: 800, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+      this.portalGlow(px, py, 0xf2b93a);
+      this.keySprites.push({ px, py, spr });
     }
-    this.crown = this.add.image(this.world.crown.x * T + 8, this.world.crown.y * T + 14, 'crown')
-      .setOrigin(0.5, 1).setDepth(5);
-    this.tweens.add({ targets: this.crown, y: this.crown.y - 2, duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
-    this.portalGlow(this.crown.x, this.crown.y - 14, 0xbfe9ff);
+    this.keyDoors = [];
+    for (let y = 0; y < H; y++) for (let x = 1; x < W - 1; x++) {
+      if (this.world.grid[y * W + x] === TILE.KEYDOOR && this.layer.getTileAt(x, y)) {
+        this.keyDoors.push({ x, y, px: x * T + 8, py: y * T + 8, open: false });
+      }
+    }
+    this.suitSprite = null;
+    if (this.world.dungeon && this.registry.get('skin') !== 'player_fire') {
+      const px = this.world.dungeon.x * T + 8, py = this.world.dungeon.y * T + 14;
+      this.suitSprite = this.add.image(px, py, 'suit').setOrigin(0.5, 1).setDepth(5);
+      this.tweens.add({ targets: this.suitSprite, y: py - 3, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+      this.portalGlow(px, py - 8, 0xe8721f);
+    }
 
     // a loot stash left from a previous death
     this.stashSprite = null;
@@ -456,7 +491,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   addGatePortal(gate) {
-    const zones = gate.region === 1 ? ZONES_R : ZONES;
+    const zones = [ZONES, ZONES_R, ZONES_L][gate.region] || ZONES;
     const p = { name: `${zones[gate.zone].name} Gate`, x: gate.shaftX * T + 8, y: gate.row * T };
     this.portals.push(p);
     this.add.image(p.x, p.y - 2, 'portal').setOrigin(0.5, 1).setDepth(2).setTint(0xd0e8ff);
@@ -531,7 +566,7 @@ export default class GameScene extends Phaser.Scene {
       jump: add(k.SPACE), dig: add(k.X), dig2: add(k.J),
       dash: add(k.SHIFT), dash2: add(k.C),
       interact: add(k.E), dyna: add(k.K), kit: add(k.T), ladder: add(k.L),
-      mute: add(k.M), recall: add(k.R), esc: add(k.ESC),
+      water: add(k.G), mute: add(k.M), recall: add(k.R), esc: add(k.ESC),
     };
     this.input.keyboard.on('keydown-M', () => {
       const muted = Sfx.toggleMute();
@@ -556,6 +591,7 @@ export default class GameScene extends Phaser.Scene {
       dynaPressed: jp(K.dyna) || !!t.dynaPressed,
       kitPressed: jp(K.kit),
       ladderPressed: jp(K.ladder) || !!t.ladderPressed,
+      waterPressed: jp(K.water) || !!t.waterPressed,
       recallDown: K.recall.isDown || !!t.recall,
     };
     // consume one-shot touch edges so they fire exactly once
@@ -564,6 +600,7 @@ export default class GameScene extends Phaser.Scene {
     if (t.dashPressed) t.dashPressed = false;
     if (t.dynaPressed) t.dynaPressed = false;
     if (t.ladderPressed) t.ladderPressed = false;
+    if (t.waterPressed) t.waterPressed = false;
     return inp;
   }
 
@@ -615,6 +652,25 @@ export default class GameScene extends Phaser.Scene {
     if (feet && feet.index === TILE.SPIKE && this.player.body.velocity.y >= 0) {
       this.damagePlayer(px, 1, true);
     }
+
+    // LAVA burns on contact (the fireproof suit halves it) — check body & feet
+    const inLava = [this.layer.getTileAtWorldXY(px, py + 6), this.layer.getTileAtWorldXY(px, py)]
+      .some((t) => t && t.index === TILE.LAVA);
+    if (inLava && time > this.lavaHurtAt) {
+      const suit = this.registry.get('skin') === 'player_fire';
+      this.lavaHurtAt = time + (suit ? 900 : 550);
+      this.damagePlayer(px, 1);
+      this.player.setVelocityY(-180); // little hop out
+      this.fx.burst(px, py, 0xff8c2a, 8);
+    }
+
+    // water jets: convert LAVA they pass through (LAVA doesn't collide)
+    this.waterJets.getChildren().forEach((jet) => {
+      if (!jet.active) return;
+      const t = this.layer.getTileAtWorldXY(jet.x, jet.y);
+      if (t && t.index === TILE.LAVA) { this.coolTile(t); this.killJet(jet); }
+      else if (jet.life !== undefined && time > jet.life) this.killJet(jet);
+    });
 
     // pickups magnet — never pull a pickup you can't actually take right now
     // (full bag, or a heart at full health), or it just vibrates on your body.
@@ -703,23 +759,42 @@ export default class GameScene extends Phaser.Scene {
         else hint = 'The gate is sealed... find its Portal Stone';
       }
     }
+    // key-locked dungeon door — opens if you carry a dungeon key
+    for (const kd of this.keyDoors) {
+      if (!kd.open && Phaser.Math.Distance.Between(px, py, kd.px, kd.py) < 34) {
+        if (this.registry.get('dungeonKeys') > 0) this.openKeyDoor(kd);
+        else hint = 'A locked vault door — find the Key';
+      }
+    }
+    // dungeon keys + the fireproof suit
+    for (const k of this.keySprites) {
+      if (k.spr.active && near(k.px, k.py, 16)) this.takeKey(k);
+    }
+    if (this.suitSprite && this.suitSprite.active && near(this.suitSprite.x, this.suitSprite.y - 6, 18)) {
+      this.takeSuit();
+    }
     // death-loot stash — recover your dropped gems
     if (this.stashSprite && this.stashSprite.active && near(this.stashSprite.x, this.stashSprite.y - 4, 20)) {
       this.recoverStash();
     }
-    // the Idol (opens the Rift) and the Crown (true ending)
+    // finales: Idol opens the east Rift, Crown opens the west Ember Rift,
+    // the Heart of the Volcano is the true ending.
     if (this.idol.visible && !this.claiming && near(this.idol.x, this.idol.y - 12, 22)) this.claimIdol();
-    if (!this.won && !this.claiming && near(this.crown.x, this.crown.y - 12, 22)) this.winGame();
+    if (this.crown.visible && !this.claiming && near(this.crown.x, this.crown.y - 12, 22)) this.claimCrown();
+    if (!this.won && !this.claiming && near(this.heart.x, this.heart.y - 12, 22)) this.winGame();
 
-    // rift hint when standing at a sealed rift
-    if (!this.registry.get('rightUnlocked') &&
-        Phaser.Math.Distance.Between(px, py, DIVIDER * T, SURFACE * T) < 40) {
+    // rift hints
+    if (!this.registry.get('rightUnlocked') && Phaser.Math.Distance.Between(px, py, DIVIDER * T, SURFACE * T) < 40) {
       hint = 'The Rift is sealed — claim the Golden Idol below to open it';
+    }
+    if (!this.registry.get('lavaUnlocked') && Phaser.Math.Distance.Between(px, py, DIVIDER2 * T, SURFACE * T) < 40) {
+      hint = 'The Ember Rift is sealed — claim the Sun Crown to open it';
     }
 
     if (input.dynaPressed) this.throwDynamite();
     if (input.kitPressed) this.placeKit();
     if (input.ladderPressed) this.placeLadder();
+    if (input.waterPressed) this.fireWaterGun();
 
     this.game.events.emit('hud:hint', hint);
   }
@@ -835,12 +910,14 @@ export default class GameScene extends Phaser.Scene {
   meetsReq(req) {
     if (req.pick && this.registry.get('pickTier') < req.pick) return false;
     if (req.firePick && !this.registry.get('upgrades').firePick) return false;
+    if (req.waterGun && !this.registry.get('upgrades').waterGun) return false;
     return true;
   }
 
   digTileAt(wx, wy) {
     const tile = this.layer.getTileAtWorldXY(wx, wy);
-    if (!tile || tile.index === TILE.LADDER || tile.index === TILE.SPIKE) return;
+    if (!tile || tile.index === TILE.LADDER || tile.index === TILE.SPIKE || tile.index === TILE.LAVA) return;
+    if (tile.index === TILE.KEYDOOR) { Sfx.clank(); return; }
     const info = TILE_INFO[tile.index];
     if (!info || tile.index === TILE.BEDROCK || tile.index === TILE.GATE) {
       Sfx.clank();
@@ -854,7 +931,9 @@ export default class GameScene extends Phaser.Scene {
       const now = this.time.now;
       if (now - (this.reqHintAt || 0) > 900) {
         this.reqHintAt = now;
-        const msg = info.req.firePick ? 'ICE — needs the FIRE PICK' : `TOO HARD — needs PICKAXE ${'I'.repeat(info.req.pick)}`;
+        const msg = info.req.firePick ? 'ICE — needs the FIRE PICK'
+          : info.req.waterGun ? 'HOT ROCK — cool it with the WATER GUN'
+            : `TOO HARD — needs PICKAXE ${'I'.repeat(info.req.pick)}`;
         this.fx.float(tile.getCenterX(), tile.getCenterY() - 8, msg, '#9ae8f2');
       }
       return;
@@ -1100,7 +1179,7 @@ export default class GameScene extends Phaser.Scene {
     r.get('takenStones').push(st.key);
     Sfx.orb();
     this.fx.burst(st.px, st.py, 0xf2c53a, 12);
-    const region = st.key.startsWith('r1') ? ZONES_R : ZONES;
+    const region = st.key.startsWith('r1') ? ZONES_R : st.key.startsWith('r2') ? ZONES_L : ZONES;
     this.game.events.emit('dialog:show', {
       name: 'Portal Stone',
       lines: ['A humming golden stone...', `It resonates with the sealed gate of ${region[st.zone].name}.`],
@@ -1225,10 +1304,25 @@ export default class GameScene extends Phaser.Scene {
   talkTo(npc) {
     this.uiOpen = true;
     Sfx.talk();
-    if (npc.dialog === 'shop' || npc.dialog === 'shopEast') {
-      this.shopEast = npc.dialog === 'shopEast';
+    if (npc.dialog === 'shop' || npc.dialog === 'shopEast' || npc.dialog === 'shopLava') {
+      this.shopKind = npc.dialog === 'shopEast' ? 'east' : npc.dialog === 'shopLava' ? 'lava' : 'west';
       this.sellBag();
-      this.game.events.emit('shop:open', this.shopStock(this.shopEast));
+      this.game.events.emit('shop:open', this.shopStock(this.shopKind));
+    } else if (npc.dialog === 'gusLava') {
+      const tips = [
+        ['Slag wipes soot from his brow.', 'Buy the WATER GUN off Cinder. Spray lava and it hardens to walkable rock.'],
+        ['Slag points down.', 'Halfway down sits a locked vault. The Key is hidden in a cave nearby.'],
+        ['Slag grins.', 'That vault holds a Fireproof Suit. You\'ll need it — the lower half is all fire.'],
+        ['Slag warns.', 'Below the vault, lava\'s everywhere. No suit, no chance.'],
+      ];
+      this.game.events.emit('dialog:show', { name: 'Slag', lines: tips[Math.floor(Math.random() * tips.length)] });
+    } else if (npc.dialog === 'mayorLava') {
+      this.game.events.emit('dialog:show', {
+        name: 'Warden Ash',
+        lines: ['So the Crown burned open the Ember Rift. Cinder Reach greets you.',
+          'The Heart of the Volcano sleeps at the very bottom — the last prize.',
+          'Find the vault, don the suit, and brave the Inferno Deep.'],
+      });
     } else if (npc.dialog === 'gus') {
       const tips = [
         ['Gus squints at the horizon.', 'Dirt gives way easy. The green rock below wants a better pickaxe.'],
@@ -1279,16 +1373,18 @@ export default class GameScene extends Phaser.Scene {
     this.save();
   }
 
-  // Upgrade ladders extend into the east game. maxTier caps what a shop offers.
-  shopStock(east) {
+  // Three shops: 'west' (Mara), 'east' (Yuki), 'lava' (Cinder). Deeper towns
+  // unlock higher tiers + their signature tool.
+  shopStock(kind) {
     const r = this.registry;
     const u = r.get('upgrades');
     const stock = [];
+    const deep = kind === 'east' || kind === 'lava';
     const PICK = { names: ['II', 'III', 'IV', 'V', 'VI'], cost: [60, 220, 600, 1200, 2500] };
     const BAG = { cap: [12, 18, 26, 36, 48], cost: [40, 150, 400, 900, 1800] };
     const LAMP = { names: ['II', 'III', 'IV', 'V'], cap: [150, 220, 320, 430], cost: [50, 180, 450, 1000] };
     const HP = { cost: [80, 200, 500, 900, 1500] };
-    const pickMax = east ? 5 : 3, bagMax = east ? 4 : 3, lampMax = east ? 4 : 3, hpMax = east ? 5 : 3;
+    const pickMax = deep ? 5 : 3, bagMax = deep ? 4 : 3, lampMax = deep ? 4 : 3, hpMax = deep ? 5 : 3;
 
     const pickLvl = r.get('pickTier');
     if (pickLvl - 1 < pickMax) stock.push({ id: 'pick', name: `Pickaxe ${PICK.names[pickLvl - 1]}`, desc: 'Digs faster, hits harder', cost: PICK.cost[pickLvl - 1], cur: 'coins' });
@@ -1299,15 +1395,17 @@ export default class GameScene extends Phaser.Scene {
     const hpLvl = u.hp || 0;
     if (hpLvl < hpMax) stock.push({ id: 'hp', name: 'Heart Container', desc: '+1 max health', cost: HP.cost[hpLvl], cur: 'coins' });
 
-    if (east && !u.firePick) stock.push({ id: 'firePick', name: 'FIRE PICK', desc: 'Melts ICE blocks in the deep frost', cost: 1500, cur: 'coins' });
-    if (east) stock.push({ id: 'ladder', name: 'Rope Ladder x3', desc: 'L drops a ladder to climb up', cost: 90, cur: 'coins' });
+    if (kind === 'east' && !u.firePick) stock.push({ id: 'firePick', name: 'FIRE PICK', desc: 'Melts ICE blocks in the deep frost', cost: 1500, cur: 'coins' });
+    if (kind === 'lava' && !u.waterGun) stock.push({ id: 'waterGun', name: 'WATER GUN', desc: 'G sprays LAVA/HOT ROCK into cool stone', cost: 1400, cur: 'coins' });
+    if (deep) stock.push({ id: 'ladder', name: 'Rope Ladder x3', desc: 'L drops a ladder to climb up', cost: 90, cur: 'coins' });
     stock.push({ id: 'kit', name: 'Teleporter Kit', desc: 'T places a camp portal', cost: 75, cur: 'coins' });
     if (r.get('powers').dynamite) stock.push({ id: 'dyna', name: 'Dynamite x3', desc: 'K goes boom', cost: 60, cur: 'coins' });
     if (!u.armor) stock.push({ id: 'armor', name: 'Leather Armor', desc: 'Halves damage taken', cost: 6, cur: 'orbs' });
     if (!u.magnet) stock.push({ id: 'magnet', name: 'Loot Magnet', desc: 'Pulls loot from afar', cost: 4, cur: 'orbs' });
     if (!u.lucky) stock.push({ id: 'lucky', name: 'Lucky Charm', desc: '+25% sell price', cost: 5, cur: 'orbs' });
     if (!u.steamlamp) stock.push({ id: 'steamlamp', name: 'Steam Lamp', desc: 'Much wider light', cost: 4, cur: 'orbs' });
-    stock._east = east;
+    stock._kind = kind;
+    stock._east = kind !== 'west';
     return stock;
   }
 
@@ -1332,10 +1430,10 @@ export default class GameScene extends Phaser.Scene {
     Sfx.buy();
     this.save();
     this.game.events.emit('hud:refresh');
-    this.game.events.emit('shop:open', this.shopStock(this.shopEast)); // refresh stock
+    this.game.events.emit('shop:open', this.shopStock(this.shopKind || 'west')); // refresh stock
   }
 
-  // Claiming the Idol: warp to the surface and OPEN THE RIFT to the east.
+  // Claiming the Idol: warp to the surface and OPEN THE RIFT east (frost).
   claimIdol() {
     this.claiming = true;
     this.registry.set('idolClaimed', true);
@@ -1343,7 +1441,7 @@ export default class GameScene extends Phaser.Scene {
     Sfx.win();
     this.idol.setDepth(60);
     this.cameras.main.flash(700, 255, 220, 120);
-    this.openRift();
+    this.openRift(this.riftFrost);
     this.game.events.emit('dialog:show', {
       name: 'The Golden Idol',
       lines: ['The Idol blazes with light and lifts you to the surface!',
@@ -1351,31 +1449,134 @@ export default class GameScene extends Phaser.Scene {
         'A frozen land — and the Sun Crown — await beyond it.'],
     });
     this.uiOpen = true;
-    this.time.delayedCall(400, () => {
-      this.idol.setVisible(false);
-      this.returnToTown();
-      this.claiming = false;
-    });
+    this.time.delayedCall(400, () => { this.idol.setVisible(false); this.returnToTown(); this.claiming = false; });
     this.save();
   }
 
-  openRift() {
-    if (this.riftWall) { this.riftWall.destroy(); this.riftWall = null; }
-    if (this.riftGate) this.riftGate.setTint(0xc89aff);
-    if (this.riftGlow) this.riftGlow.setVisible(true);
-    if (this.riftSign) this.riftSign.setText('THE RIFT').setColor('#d0a8ff');
+  // Claiming the Crown: OPEN THE EMBER RIFT west (lava), warp to the surface.
+  claimCrown() {
+    this.claiming = true;
+    this.registry.set('crownClaimed', true);
+    this.registry.set('lavaUnlocked', true);
+    Sfx.win();
+    this.crown.setDepth(60);
+    this.cameras.main.flash(700, 255, 160, 80);
+    this.openRift(this.riftLava);
+    this.game.events.emit('dialog:show', {
+      name: 'The Sun Crown',
+      lines: ['The Crown\'s fire tears open the EMBER RIFT far to the WEST!',
+        'A molten realm waits below Cinder Reach — twice as vast, twice as deadly.',
+        'Deep in its heart lies the last treasure: the Heart of the Volcano.'],
+    });
+    this.uiOpen = true;
+    this.time.delayedCall(400, () => { this.crown.setVisible(false); this.returnToTown(); this.claiming = false; });
+    this.save();
+  }
+
+  openRift(rift) {
+    if (rift.wall) { rift.wall.destroy(); rift.wall = null; }
+    rift.gate.setTint(rift.tint);
+    rift.glow.setVisible(true);
+    rift.sign.setText(rift.openLabel).setColor('#f0c0a0');
   }
 
   winGame() {
     this.won = true;
+    this.registry.set('heartClaimed', true);
     Sfx.win();
-    this.crown.setDepth(60);
-    this.cameras.main.flash(600, 255, 240, 180);
+    this.heart.setDepth(60);
+    this.cameras.main.flash(600, 255, 200, 120);
     this.uiOpen = true;
     this.game.events.emit('game:won', {
       coins: this.registry.get('coins'),
       orbs: this.registry.get('orbs'),
     });
+    this.save();
+  }
+
+  // ---- water gun: cool LAVA/HOTROCK into rock ----
+  fireWaterGun() {
+    const r = this.registry;
+    if (!r.get('upgrades').waterGun) return;
+    const now = this.time.now;
+    if (now < (this.waterReadyAt || 0)) return;
+    this.waterReadyAt = now + 260;
+    Sfx.water();
+    const p = this.player;
+    const jet = this.waterJets.create(p.x + p.facing * 10, p.y + 2, 'water').setDepth(11);
+    jet.body.setAllowGravity(false);
+    jet.body.setSize(5, 5);
+    const dy = p.dead ? 0 : 0;
+    jet.setVelocity(p.facing * 300, dy);
+    jet.life = now + 500;
+  }
+
+  waterHitsTile(jet, tile) {
+    if (tile && tile.index === TILE.HOTROCK) this.coolTile(tile);
+    this.killJet(jet);
+  }
+
+  coolTile(tile) {
+    // LAVA -> solid MAGMA_ROCK (a bridge); HOTROCK -> MAGMA_ROCK (now diggable)
+    this.layer.putTileAt(TILE.MAGMA_ROCK, tile.x, tile.y);
+    this.layer.setCollision(TILE.MAGMA_ROCK, true, false, this.layer.layer);
+    this.tileHp.delete(tile.y * W + tile.x);
+    Sfx.hiss();
+    this.fx.burst(tile.getCenterX(), tile.getCenterY(), 0xbfe4ff, 8);
+    for (let i = 0; i < 3; i++) {
+      const s = this.add.image(tile.getCenterX() + Phaser.Math.Between(-6, 6), tile.getCenterY() - 8, 'px')
+        .setTint(0xeeeeff).setDepth(12).setAlpha(0.7);
+      this.tweens.add({ targets: s, y: s.y - 10, alpha: 0, duration: 500, onComplete: () => s.destroy() });
+    }
+  }
+
+  killJet(jet) {
+    if (!jet.active) return;
+    this.fx.burst(jet.x, jet.y, 0x9fd4ff, 3);
+    jet.destroy();
+  }
+
+  // ---- dungeon key & door ----
+  takeKey(k) {
+    k.spr.destroy();
+    this.registry.set('dungeonKeys', this.registry.get('dungeonKeys') + 1);
+    Sfx.key();
+    this.fx.float(k.px, k.py - 10, 'VAULT KEY', '#f2d75c');
+    this.game.events.emit('hud:refresh');
+    this.save();
+  }
+
+  openKeyDoor(kd) {
+    kd.open = true;
+    this.registry.set('dungeonKeys', this.registry.get('dungeonKeys') - 1);
+    // remove the whole 2-tall door
+    for (const yy of [kd.y, kd.y - 1, kd.y + 1]) {
+      const t = this.layer.getTileAt(kd.x, yy);
+      if (t && t.index === TILE.KEYDOOR) {
+        this.layer.removeTileAt(kd.x, yy);
+        this.registry.get('dugTiles').push(yy * W + kd.x);
+        this.fx.burst(kd.x * T + 8, yy * T + 8, 0xf2b93a, 6);
+      }
+    }
+    Sfx.unlock ? Sfx.unlock() : Sfx.gateOpen();
+    this.game.events.emit('hud:refresh');
+    this.save();
+  }
+
+  takeSuit() {
+    this.suitSprite.destroy();
+    this.suitSprite = null;
+    this.registry.set('skin', 'player_fire');
+    this.player.setSkin('player_fire');
+    Sfx.powerup();
+    this.cameras.main.flash(300, 255, 160, 80);
+    this.fx.burst(this.player.x, this.player.y, 0xe8721f, 16);
+    this.game.events.emit('dialog:show', {
+      name: 'The Fireproof Suit',
+      lines: ['You seal on the ancient Fireproof Suit!',
+        'Lava now burns you far more slowly — the Inferno Deep is survivable.'],
+    });
+    this.uiOpen = true;
     this.save();
   }
 

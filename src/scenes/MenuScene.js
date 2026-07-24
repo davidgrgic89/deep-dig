@@ -36,7 +36,7 @@ export default class MenuScene extends Phaser.Scene {
     const dusty = this.add.image(SW * 0.72, SH - 96, 'player', 0).setScale(6);
     this.tweens.add({ targets: dusty, y: dusty.y - 4, duration: 1400, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
 
-    const hasSave = !!localStorage.getItem('deepdig-save-v1');
+    const hasSave = !!localStorage.getItem('deepdig-save-v2');
     this.options = hasSave ? ['CONTINUE', 'NEW DREAM'] : ['NEW DREAM'];
     this.sel = 0;
     this.optTexts = this.options.map((o, i) =>
@@ -85,7 +85,7 @@ export default class MenuScene extends Phaser.Scene {
   start() {
     const choice = this.options[this.sel];
     if (choice === 'NEW DREAM') {
-      localStorage.removeItem('deepdig-save-v1');
+      localStorage.removeItem('deepdig-save-v2');
       this.registry.set('freshRun', true);
     }
     Sfx.ensure();

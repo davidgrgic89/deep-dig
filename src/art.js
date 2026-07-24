@@ -31,21 +31,31 @@ function drawMap(g2d, rows, ox = 0, oy = 0, pal = PAL) {
 }
 
 // Make a spritesheet texture out of several same-sized ASCII frames.
-function sheet(scene, key, frames, fw, fh) {
+function sheet(scene, key, frames, fw, fh, pal = PAL) {
   const canvas = document.createElement('canvas');
   canvas.width = fw * frames.length;
   canvas.height = fh;
   const g = canvas.getContext('2d');
-  frames.forEach((rows, i) => drawMap(g, rows, i * fw, 0));
+  frames.forEach((rows, i) => drawMap(g, rows, i * fw, 0, pal));
   scene.textures.addSpriteSheet(key, canvas, { frameWidth: fw, frameHeight: fh });
 }
 
-function single(scene, key, rows) {
+function single(scene, key, rows, pal = PAL) {
   const fw = rows[0].length, fh = rows.length;
   const tex = scene.textures.createCanvas(key, fw, fh);
-  drawMap(tex.getContext(), rows);
+  drawMap(tex.getContext(), rows, 0, 0, pal);
   tex.refresh();
 }
+
+// Fireproof suit: the explorer re-coloured — steel helmet, cyan visor, orange
+// heat-suit. Reuses the player frame maps with a remapped palette.
+const FIRE_PAL = {
+  ...PAL,
+  h: '#c4c8cc', H: '#8e949c',   // helmet
+  s: '#7fd0e2', E: '#123a44',   // visor + eyes
+  k: '#e8721f', K: '#b0541a',   // suit body
+  b: '#7a2f10', p: '#8a3a12', P: '#5f2a0d', // straps + legs
+};
 
 // ---------------------------------------------------------------------------
 // PLAYER — "Dusty", explorer with a fedora. 16x22, feet at bottom.
@@ -452,6 +462,37 @@ const BOULDER = [
   '...dUUUUUUUUd...',
   '.....dUUUd......',
 ];
+// Water gun jet, dungeon key, fireproof-suit reward
+const WATER = [
+  '..zz..',
+  '.zizz.',
+  'ziizzZ',
+  'zzzzZZ',
+  '.zzZZ.',
+  '..zZ..',
+];
+const KEY = [
+  '.lll.......',
+  'l.LLl......',
+  'l.iLl......',
+  'l.LLl......',
+  '.lll.......',
+  '..lLLLLl...',
+  '..l....l.l.',
+  '..l....lll.',
+];
+const SUIT = [
+  '...uUUu...',
+  '..uUUUUu..',
+  '..uEUUEu..',
+  '..UUUUUU..',
+  '...cccc...',
+  '..occcco..',
+  '.occcccco.',
+  '.oc.cc.co.',
+  '..cc..cc..',
+  '..cc..cc..',
+];
 // Loot stash — the sack of gems you drop when you die
 const STASH = [
   '...NNNN...',
@@ -516,6 +557,9 @@ export const TILE = {
   ORE_MYTHRIL: 31, BG_FROST: 32,
   // tool-gated blocks
   HARDROCK: 33, ICE_BLOCK: 34,
+  // molten west region
+  MAGMA_GRASS: 35, MAGMA_DIRT: 36, MAGMA_ROCK: 37, MAGMA_DEEP: 38,
+  LAVA: 39, HOTROCK: 40, BG_MAGMA: 41, KEYDOOR: 42,
 };
 
 // tile hp / value tables used by the game scene
@@ -540,6 +584,11 @@ export const TILE_INFO = {
   // gated: only breakable once you meet `req`
   [TILE.HARDROCK]: { hp: 6, req: { pick: 3 } },
   [TILE.ICE_BLOCK]: { hp: 6, req: { firePick: true } },
+  // molten west region
+  [TILE.MAGMA_GRASS]: { hp: 1 },
+  [TILE.MAGMA_DIRT]: { hp: 2 }, [TILE.MAGMA_ROCK]: { hp: 4 },
+  [TILE.MAGMA_DEEP]: { hp: 6 },
+  [TILE.HOTROCK]: { hp: 5, req: { waterGun: true } },
 };
 export const ORES = {
   copper: { value: 5, color: 0xd08850, name: 'Copper' },
@@ -580,7 +629,7 @@ function paintOre(g, x, y, color, hi) {
 
 export function makeTiles(scene) {
   seed = 1337;
-  const count = 35;
+  const count = 43;
   const tex = scene.textures.createCanvas('tiles', count * 16, 16);
   const g = tex.getContext();
   const P = (i) => i * 16;
@@ -702,6 +751,37 @@ export function makeTiles(scene) {
   g.moveTo(P(TILE.ICE_BLOCK) + 12, 3); g.lineTo(P(TILE.ICE_BLOCK) + 8, 9);
   g.stroke();
 
+  // ---- molten west region ----
+  // MAGMA_GRASS — charred crust with a glowing crack line on top
+  paintBase(g, P(TILE.MAGMA_GRASS), 0, '#4a2e24', '#2e1c16', '#6e4436');
+  g.fillStyle = '#1c1210'; g.fillRect(P(TILE.MAGMA_GRASS), 0, 16, 3);
+  g.fillStyle = '#ff7a2a';
+  for (let i = 0; i < 5; i++) g.fillRect(P(TILE.MAGMA_GRASS) + Math.floor(rnd() * 15), 1, 2, 1);
+  paintBase(g, P(TILE.MAGMA_DIRT), 0, '#5c3324', '#3c2016', '#764634');
+  paintBase(g, P(TILE.MAGMA_ROCK), 0, '#4a2c2c', '#301c1c', '#684040');
+  paintBase(g, P(TILE.MAGMA_DEEP), 0, '#2e1a1a', '#1c1010', '#442626');
+  // glowing embers in the deep magma
+  for (const idx of [TILE.MAGMA_ROCK, TILE.MAGMA_DEEP]) {
+    for (let i = 0; i < 3; i++) { g.fillStyle = rnd() < 0.5 ? '#ff7a2a' : '#f2b93a'; g.fillRect(P(idx) + Math.floor(rnd() * 15), Math.floor(rnd() * 15), 1, 1); }
+  }
+  // LAVA — molten, glowing (a hazard; cooled to MAGMA_ROCK by the water gun)
+  paintBase(g, P(TILE.LAVA), 0, '#e8541a', '#c23a10', '#ff9c34', 18);
+  g.fillStyle = '#ffdd66';
+  for (let i = 0; i < 6; i++) g.fillRect(P(TILE.LAVA) + Math.floor(rnd() * 15), Math.floor(rnd() * 15), 1 + (rnd() < 0.3 ? 1 : 0), 1);
+  g.fillStyle = '#fff0a0'; g.fillRect(P(TILE.LAVA), 0, 16, 1);
+  // HOTROCK — dark rock laced with molten veins (needs the Water Gun to cool)
+  paintBase(g, P(TILE.HOTROCK), 0, '#3a2020', '#241414', '#4e2e2e', 10);
+  g.strokeStyle = '#ff7a2a'; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(P(TILE.HOTROCK) + 2, 4); g.lineTo(P(TILE.HOTROCK) + 8, 8); g.lineTo(P(TILE.HOTROCK) + 6, 13);
+  g.moveTo(P(TILE.HOTROCK) + 11, 3); g.lineTo(P(TILE.HOTROCK) + 13, 10); g.stroke();
+  g.fillStyle = '#ffcc44'; g.fillRect(P(TILE.HOTROCK) + 8, 8, 1, 1);
+  // BG_MAGMA
+  paintBase(g, P(TILE.BG_MAGMA), 0, '#2a1614', '#1a0e0c', '#3a201c', 16);
+  // KEYDOOR — locked brick door with a gold keyhole
+  paintBase(g, P(TILE.KEYDOOR), 0, '#7c6434', '#5c4820', '#9c8452', 8);
+  g.fillStyle = '#3a2c14'; g.fillRect(P(TILE.KEYDOOR), 0, 2, 16); g.fillRect(P(TILE.KEYDOOR) + 14, 0, 2, 16);
+  g.fillStyle = '#f2b93a'; g.fillRect(P(TILE.KEYDOOR) + 7, 5, 2, 2); g.fillRect(P(TILE.KEYDOOR) + 7, 7, 1, 4);
+
   tex.refresh();
 
   // crack overlays (2 damage stages)
@@ -723,10 +803,12 @@ export function makeTiles(scene) {
 
 // ---------------------------------------------------------------------------
 export function makeSprites(scene) {
-  sheet(scene, 'player', [
+  const playerFrames = [
     playerFrame('idle'), playerFrame('walk1'), playerFrame('idle'),
     playerFrame('walk2'), playerFrame('jump'),
-  ], 16, 22);
+  ];
+  sheet(scene, 'player', playerFrames, 16, 22);
+  sheet(scene, 'player_fire', playerFrames, 16, 22, FIRE_PAL); // fireproof suit skin
   sheet(scene, 'grub', GRUB, 14, 12);
   sheet(scene, 'beetle', BEETLE, 14, 12);
   sheet(scene, 'crawler', CRAWLER, 14, 12);
@@ -750,6 +832,9 @@ export function makeSprites(scene) {
   single(scene, 'crown', CROWN);
   single(scene, 'stash', STASH);
   single(scene, 'boulder', BOULDER);
+  single(scene, 'water', WATER);
+  single(scene, 'key', KEY);
+  single(scene, 'suit', SUIT);
 
   // ore pickup sprites (8x8 chunks tinted at runtime)
   const chunk = scene.textures.createCanvas('chunk', 8, 8);

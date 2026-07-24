@@ -37,6 +37,19 @@ class SfxEngine {
     return this.muted;
   }
 
+  // Fully halt audio (used on pause / when the tab is hidden) — the WebAudio
+  // clock keeps running in the background otherwise, so we suspend the context.
+  pauseAudio() {
+    this.wasPlaying = !!this.musicTimer;
+    this.stopMusic();
+    if (this.ctx && this.ctx.state === 'running') this.ctx.suspend();
+  }
+
+  resumeAudio() {
+    if (this.ctx) this.ctx.resume();
+    if (this.wasPlaying && !this.muted) this.startMusic();
+  }
+
   // ---- primitives -------------------------------------------------------
   tone({ from = 440, to = from, dur = 0.1, type = 'square', vol = 0.2, delay = 0, dest = null }) {
     const ctx = this.ensure();

@@ -24,7 +24,7 @@ export default class UIScene extends Phaser.Scene {
     this.dynaText = this.add.text(16, 100, '', TXT(10, '#e88b3a')).setDepth(10);
     this.kitText = this.add.text(16, 120, '', TXT(10, '#a8d8b8')).setDepth(10);
     this.ladderText = this.add.text(16, 140, '', TXT(10, '#8fd8a0')).setDepth(10);
-    this.depthText = this.add.text(SW - 52, 15, '', TXT(11, '#c8d0dc')).setOrigin(1, 0).setDepth(10);
+    this.depthText = this.add.text(SW - 100, 15, '', TXT(11, '#c8d0dc')).setOrigin(1, 0).setDepth(10);
 
     // lantern bar
     this.lampBarBg = this.add.rectangle(SW - 16, 44, 120, 10, 0x14100a).setOrigin(1, 0).setDepth(10).setStrokeStyle(2, 0x5c4820);
@@ -60,6 +60,7 @@ export default class UIScene extends Phaser.Scene {
     on('game:won', (stats) => this.showWin(stats));
 
     this.input.keyboard.on('keydown', (ev) => this.handleKey(ev));
+    this.input.keyboard.on('keydown-P', () => { if (!this.mode) this.togglePause(); });
     this.buildTouchControls();
     this.refreshHud();
   }
@@ -100,6 +101,14 @@ export default class UIScene extends Phaser.Scene {
     this.setControlsVisible(this.isTouch);
 
     this.buildFullscreenButton();
+    this.buildPauseButton();
+    this.buildPauseOverlay();
+
+    // Auto-pause when the tab/app is hidden or the device screen turns off, so
+    // the game (and its music) never keep running in the background.
+    this._onHidden = () => { if (document.hidden) this.pauseGame(); };
+    document.addEventListener('visibilitychange', this._onHidden);
+    this.events.once('shutdown', () => document.removeEventListener('visibilitychange', this._onHidden));
 
     // reveal the pad as soon as a real touch happens; hide again if a key is used
     this.input.on('pointerdown', (p) => { if (p.wasTouch) this.setControlsVisible(true); });
@@ -135,6 +144,53 @@ export default class UIScene extends Phaser.Scene {
     });
     this.scale.on('enterfullscreen', paint);
     this.scale.on('leavefullscreen', paint);
+  }
+
+  // Pause button (top-right, left of the fullscreen icon) — two bars.
+  buildPauseButton() {
+    const SW = this.scale.width;
+    const bx = SW - 62, by = 24;
+    const zone = this.add.rectangle(bx, by, 34, 30, 0x000000, 0.28)
+      .setScrollFactor(0).setDepth(45).setInteractive({ useHandCursor: true });
+    const icon = this.add.graphics().setScrollFactor(0).setDepth(46);
+    icon.fillStyle(0xf2e6c9, 0.9);
+    icon.fillRect(bx - 6, by - 7, 4, 14);
+    icon.fillRect(bx + 2, by - 7, 4, 14);
+    zone.on('pointerdown', () => this.togglePause());
+  }
+
+  buildPauseOverlay() {
+    const { width: SW, height: SH } = this.scale;
+    this.pauseOverlay = this.add.container(0, 0).setDepth(70).setVisible(false);
+    this.pauseBg = this.add.rectangle(SW / 2, SH / 2, SW, SH, 0x05040a, 0.82);
+    const title = this.add.text(SW / 2, SH / 2 - 30, 'PAUSED', TXT(28, '#f2d75c')).setOrigin(0.5);
+    const hint = this.add.text(SW / 2, SH / 2 + 22, 'tap here or press P to resume', TXT(10, '#d8c8a8')).setOrigin(0.5);
+    this.pauseBg.on('pointerdown', () => this.resumeGame());
+    this.pauseOverlay.add([this.pauseBg, title, hint]);
+    this.paused = false;
+  }
+
+  togglePause() { this.paused ? this.resumeGame() : this.pauseGame(); }
+
+  pauseGame() {
+    if (this.paused) return;
+    this.paused = true;
+    Sfx.pauseAudio();
+    // release any held touch input so nothing lingers on resume
+    const t = this.registry.get('touch');
+    if (t) for (const k of Object.keys(t)) t[k] = false;
+    this.pauseOverlay.setVisible(true);
+    this.pauseBg.setInteractive();
+    if (this.scene.isActive('Game')) this.scene.pause('Game');
+  }
+
+  resumeGame() {
+    if (!this.paused) return;
+    this.paused = false;
+    this.pauseOverlay.setVisible(false);
+    this.pauseBg.disableInteractive();
+    if (this.scene.isPaused('Game')) this.scene.resume('Game');
+    Sfx.resumeAudio();
   }
 
   setControlsVisible(v) {
@@ -191,7 +247,7 @@ export default class UIScene extends Phaser.Scene {
   }
 
   update() {
-    if (!this.controlsOn) return;
+    if (this.paused || !this.controlsOn) return; // frozen while paused
     this.refreshEnabled();
     const pressed = this.pollTouch();
     const just = (id) => pressed.has(id) && !this.prevPressed.has(id);

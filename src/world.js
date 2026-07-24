@@ -82,6 +82,7 @@ export function generateWorld(seedNum = 7) {
   const mushrooms = [];   // {x,y}
   const chests = [];      // {x,y}
   const checkpoints = []; // {x,y,region}
+  const boulders = [];    // {x,y}  heavy rocks resting on cave floors
   const at = (x, y) => grid[y * W + x];
   const set = (x, y, v) => { if (x >= 0 && x < W && y >= 0 && y < H) grid[y * W + x] = v; };
   const inZone = (y, z) => y >= ZONES[z].top && y <= ZONES[z].bottom;
@@ -240,6 +241,23 @@ export function generateWorld(seedNum = 7) {
       }
     }
 
+    // boulders resting on cave floors (never right on the shaft) — they drop
+    // when you dig out the block beneath them
+    const restsOn = (t) => t !== TILE.EMPTY && t !== TILE.LADDER && t !== TILE.SPIKE && t !== TILE.GATE;
+    for (let z = 0; z < 3; z++) {
+      const zone = ZONES[z];
+      let placed = 0;
+      for (let i = 0; i < 90 && placed < 4; i++) {
+        const x = clampX(reg.xMin + 2 + Math.floor(rnd() * (reg.xMax - reg.xMin - 4)));
+        const y = zone.top + 3 + Math.floor(rnd() * (zone.bottom - zone.top - 6));
+        if (Math.abs(x - reg.shaftX) <= 3) continue;
+        if (at(x, y) === TILE.EMPTY && at(x, y - 1) === TILE.EMPTY && restsOn(at(x, y + 1))) {
+          boulders.push({ x, y });
+          placed++;
+        }
+      }
+    }
+
     // special rooms
     const powers = ['doubleJump', 'dash', 'dynamite'];
     const sideA = () => reg.xMin + 3 + Math.floor(rnd() * 8);
@@ -315,7 +333,7 @@ export function generateWorld(seedNum = 7) {
 
   const idol = { x: SHAFT_X, y: IDOL_ROW };
   const crown = { x: SHAFT_X2, y: IDOL_ROW };
-  return { grid, spawns, shrines, stones, gates, mushrooms, chests, checkpoints, idol, crown };
+  return { grid, spawns, shrines, stones, gates, mushrooms, chests, checkpoints, boulders, idol, crown };
 }
 
 export function regionOfX(x) { return x > DIVIDER ? 1 : 0; }

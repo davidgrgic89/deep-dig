@@ -152,6 +152,14 @@ class SfxEngine {
     [131, 196, 262, 392, 523].forEach((n, i) =>
       this.tone({ from: n, dur: 0.4, type: 'triangle', vol: 0.16, delay: 0.2 + i * 0.12 }));
   }
+  rumble() { // boulder about to fall — a low warning grind
+    this.noise({ dur: 0.5, vol: 0.12, freq: 120, q: 0.5 });
+    this.tone({ from: 70, to: 55, dur: 0.5, type: 'sawtooth', vol: 0.06 });
+  }
+  thud() { // boulder lands
+    this.noise({ dur: 0.18, vol: 0.28, freq: 180, q: 0.5 });
+    this.tone({ from: 110, to: 40, dur: 0.16, type: 'square', vol: 0.16 });
+  }
   explosion() {
     this.noise({ dur: 0.5, vol: 0.35, freq: 250, q: 0.4 });
     this.tone({ from: 150, to: 40, dur: 0.4, type: 'sawtooth', vol: 0.2 });

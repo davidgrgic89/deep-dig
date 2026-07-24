@@ -275,8 +275,8 @@ export default class UIScene extends Phaser.Scene {
   deathFlash() {
     const { width: SW, height: SH } = this.scale;
     const black = this.add.rectangle(SW / 2, SH / 2, SW, SH, 0x000000, 0).setDepth(30);
-    const msg = this.add.text(SW / 2, SH / 2, 'The depths claim another dream...\n(half your coins are gone)',
-      { ...TXT(12, '#e85c5c'), align: 'center' }).setOrigin(0.5).setDepth(31).setAlpha(0);
+    const msg = this.add.text(SW / 2, SH / 2, 'The depths claim another dream...\nYour gems dropped where you fell — go get them!',
+      { ...TXT(11, '#e85c5c'), align: 'center', lineSpacing: 6 }).setOrigin(0.5).setDepth(31).setAlpha(0);
     this.tweens.add({ targets: black, fillAlpha: 0.75, duration: 500 });
     this.tweens.add({ targets: msg, alpha: 1, duration: 500 });
     this.time.delayedCall(1500, () => {
@@ -333,20 +333,28 @@ export default class UIScene extends Phaser.Scene {
     this.stock = stock;
     this.sel = Math.min(this.sel || 0, stock.length - 1);
     const rows = stock.length;
-    const { x, y, w, h } = this.panelBox(560, 110 + rows * 26, "MARA'S TRADING POST");
+    const title = stock._east ? "YUKI'S FROST EMPORIUM" : "MARA'S TRADING POST";
+    const { x, y, w, h } = this.panelBox(580, 132 + rows * 26, title);
     this.add.text(0, 0, '');
     const r = this.registry;
-    const balance = this.add.text(x, y - h / 2 + 44,
-      `you have  $ ${r.get('coins')}   ◉ ${r.get('orbs')} orbs`, TXT(9, '#b8d8a0')).setOrigin(0.5);
-    this.panel.add(balance);
+    const orbIcon = this.add.image(x - 92, y - h / 2 + 44, 'orb').setScale(1.3);
+    const balance = this.add.text(x - 78, y - h / 2 + 38,
+      `you have  $ ${r.get('coins')}      ${r.get('orbs')} Relic Orbs`, TXT(9, '#b8d8a0'));
+    const hint = this.add.text(x, y - h / 2 + 58,
+      'Relic Orbs come from glowing HARD & ICE blocks (need Pickaxe III / Fire Pick)',
+      TXT(7, '#78c8f0')).setOrigin(0.5);
+    this.panel.add([orbIcon, balance, hint]);
     this.shopRows = [];
     stock.forEach((item, i) => {
-      const ry = y - h / 2 + 74 + i * 26;
-      const cur = item.cur === 'orbs' ? '◉' : '$';
+      const ry = y - h / 2 + 82 + i * 26;
+      const isOrb = item.cur === 'orbs';
       const afford = r.get(item.cur) >= item.cost;
-      const row = this.add.text(x - w / 2 + 30, ry,
-        `${item.name.padEnd(20)} ${cur}${item.cost}`,
+      const row = this.add.text(x - w / 2 + 34, ry,
+        `${item.name.padEnd(20)} ${item.cost}${isOrb ? ' orb' : ''}`,
         TXT(9, afford ? '#f2e6c9' : '#7a6a55'));
+      // orb-cost items are flagged with the Relic Orb icon at the row's edge
+      if (isOrb) this.panel.add(this.add.image(x - w / 2 + 18, ry + 5, 'orb').setScale(1.2));
+      else this.panel.add(this.add.text(x - w / 2 + 14, ry, '$', TXT(9, '#f2d75c')));
       const desc = this.add.text(x + w / 2 - 24, ry, item.desc, TXT(7, '#9a8c72')).setOrigin(1, 0);
       this.panel.add([row, desc]);
       this.shopRows.push(row);

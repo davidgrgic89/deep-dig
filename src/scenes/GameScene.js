@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import Sfx from '../audio.js';
 import Player from '../player.js';
 import { Enemy, makeEnemyAnims } from '../enemies.js';
+import { Boulder } from '../boulder.js';
 import { TILE, TILE_INFO, ORES } from '../art.js';
 import {
   T, W, H, SURFACE, SHAFT_X, SHAFT_X2, DIVIDER, ZONES, ZONES_R, IDOL_ROW,
@@ -98,6 +99,20 @@ export default class GameScene extends Phaser.Scene {
     this.physics.add.overlap(this.player, this.enemies, (pl, e) => this.touchEnemy(e));
 
     this.buildBarriers();
+
+    // boulders — heavy rocks that fall when you dig out their support
+    this.boulders = this.add.group();
+    for (const bd of (this.world.boulders || [])) {
+      this.boulders.add(new Boulder(this, bd.x * T + 8, bd.y * T + 8));
+    }
+    this.physics.add.collider(this.boulders, this.layer);
+    this.physics.add.collider(this.boulders, this.boulders);
+    this.physics.add.collider(this.player, this.boulders, (pl, bd) => {
+      if (bd.phase === 'fall' && bd.body.velocity.y > 90 && bd.y < pl.y + 2) {
+        this.damagePlayer(bd.x, 1);
+      }
+    });
+    this.physics.add.collider(this.enemies, this.boulders, undefined, terrainBound, this);
 
     // pickups & projectiles
     this.pickups = this.physics.add.group();
@@ -590,19 +605,22 @@ export default class GameScene extends Phaser.Scene {
       else e.setVelocity(0, (e.body.allowGravity ? e.body.velocity.y : 0));
     });
 
+    // boulders (only nearby ones need support/fall checks)
+    this.boulders.getChildren().forEach((bd) => {
+      if (bd.active && Math.abs(bd.x - px) < 460 && Math.abs(bd.y - py) < 360) bd.update(time);
+    });
+
     // spikes at feet
     const feet = this.layer.getTileAtWorldXY(px, py + 10);
     if (feet && feet.index === TILE.SPIKE && this.player.body.velocity.y >= 0) {
       this.damagePlayer(px, 1, true);
     }
 
-    // pickups magnet — but never magnet an ORE toward you when the bag is full,
-    // or it just orbits/vibrates on you. Coins/hearts/orbs always magnet.
+    // pickups magnet — never pull a pickup you can't actually take right now
+    // (full bag, or a heart at full health), or it just vibrates on your body.
     const magnet = this.registry.get('upgrades').magnet ? 48 : 20;
-    const bagFull = (this.registry.get('bag') || []).length >= this.registry.get('bagCap');
     this.pickups.getChildren().forEach((p) => {
-      const isBagOre = ORES[p.ore] && p.ore !== 'orb';
-      if (bagFull && isBagOre) { p.body.setAllowGravity(true); return; } // let it rest on the ground
+      if (!this.canCollect(p)) { p.body.setAllowGravity(true); return; } // let it rest on the ground
       const d = Phaser.Math.Distance.Between(p.x, p.y, px, py);
       if (d < magnet) {
         this.physics.moveTo(p, px, py, 220);
@@ -776,6 +794,18 @@ export default class GameScene extends Phaser.Scene {
     });
     if (hitEnemy) return;
 
+    // boulders can be smashed (so a fallen one never permanently blocks a path)
+    let hitBoulder = false;
+    this.boulders.getChildren().forEach((bd) => {
+      if (!bd.active || hitBoulder) return;
+      if (Phaser.Math.Distance.Between(bd.x, bd.y, hx, hy) < 16 ||
+          Phaser.Math.Distance.Between(bd.x, bd.y, player.x, player.y) < 16) {
+        bd.hit(this.registry.get('pickTier'));
+        hitBoulder = true;
+      }
+    });
+    if (hitBoulder) return;
+
     // then the tile in the aimed direction (from the body edge).
     if (dy === 0) {
       // horizontal swings hit head AND feet height so tunnels are walkable
@@ -851,6 +881,7 @@ export default class GameScene extends Phaser.Scene {
     Sfx.breakTile();
     this.fx.burst(tile.getCenterX(), tile.getCenterY(), 0x8a5e2e, 8);
     const cx = tile.getCenterX(), cy = tile.getCenterY();
+    const wasIndex = tile.index;
     this.layer.removeTileAt(tile.x, tile.y);
     this.tileHp.delete(idx);
     this.cracks.get(idx)?.destroy();
@@ -858,6 +889,12 @@ export default class GameScene extends Phaser.Scene {
     const dug = this.registry.get('dugTiles');
     dug.push(idx);
     if (info.ore) this.spawnOre(cx, cy, info.ore);
+    // Gated hard blocks (needed Pickaxe III / the Fire Pick) pay off: a rare
+    // Relic Orb every time, plus a good chance at a high-value gem for money.
+    if (wasIndex === TILE.HARDROCK || wasIndex === TILE.ICE_BLOCK) {
+      this.spawnOre(cx, cy, 'orb');
+      if (Math.random() < 0.5) this.spawnOre(cx, cy, wasIndex === TILE.ICE_BLOCK ? 'mythril' : 'diamond');
+    }
     // rare: digging reveals a lurker in zone 2/3
     const zone = zoneOfRow(tile.y);
     if (zone >= 1 && Math.random() < 0.012) {
@@ -894,14 +931,27 @@ export default class GameScene extends Phaser.Scene {
     return e;
   }
 
+  // Can this pickup actually be taken right now? (drives both magnet + collect)
+  canCollect(p) {
+    const r = this.registry;
+    if (p.ore === 'heart') return r.get('hp') < r.get('maxHp');
+    if (ORES[p.ore] && p.ore !== 'orb') return (r.get('bag') || []).length < r.get('bagCap');
+    return true; // coins, orbs
+  }
+
   collect(p) {
     const r = this.registry;
+    if (!this.canCollect(p)) {
+      if (p.ore === 'heart' && !p.warned) { Sfx.bagFull(); this.fx.float(p.x, p.y - 8, 'HEALTH FULL', '#e85c5c'); p.warned = true; }
+      else if (!p.warned) { Sfx.bagFull(); this.fx.float(p.x, p.y - 8, 'BAG FULL!', '#e85c5c'); p.warned = true; }
+      p.body.setAllowGravity(true); // let it rest; magnet leaves it alone until you can take it
+      return;
+    }
     if (p.ore === 'orb') {
       r.set('orbs', r.get('orbs') + 1);
       Sfx.orb();
       this.fx.float(p.x, p.y - 8, '+1 ORB', '#78d8f0');
     } else if (p.ore === 'heart') {
-      if (r.get('hp') >= r.get('maxHp')) return; // leave it if full
       r.set('hp', Math.min(r.get('maxHp'), r.get('hp') + 1));
       Sfx.heart();
     } else if (p.ore === 'coin') {
@@ -909,13 +959,7 @@ export default class GameScene extends Phaser.Scene {
       Sfx.pickup();
       this.fx.float(p.x, p.y - 8, `+${p.coinValue}`, '#f2d75c');
     } else {
-      const bag = r.get('bag');
-      if (bag.length >= r.get('bagCap')) {
-        if (!p.warned) { Sfx.bagFull(); this.fx.float(p.x, p.y - 8, 'BAG FULL!', '#e85c5c'); p.warned = true; }
-        p.body.setAllowGravity(true); // drop it — magnet loop leaves it alone until you have room
-        return;
-      }
-      bag.push(p.ore);
+      r.get('bag').push(p.ore); // canCollect already guaranteed there's room
       Sfx.pickup();
       this.fx.float(p.x, p.y - 8, ORES[p.ore].name, '#f2d75c');
     }

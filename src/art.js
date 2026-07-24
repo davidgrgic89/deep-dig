@@ -435,6 +435,23 @@ const CROWN = [
   '..lLLLLLLLLLLl..',
   '..LLLLLLLLLLLL..',
 ];
+// Boulder — a heavy round rock that falls when you dig out its support
+const BOULDER = [
+  '.....dUUUd......',
+  '...dUUUUUUUd....',
+  '..dUUUUUUUUUd...',
+  '.dUUUuuUUUUUUd..',
+  '.dUUuuuuUUUUUd..',
+  'dUUUuuuuUUUUUUUd',
+  'dUUUUUUUUUUUUUUd',
+  'dUUUUUUUUUUUUUUd',
+  'dUUUUUUUUUUUUUUd',
+  '.dUUUUUUUUUUUUd.',
+  '.dUUUUUUUUUUUUd.',
+  '..dUUUUUUUUUUd..',
+  '...dUUUUUUUUd...',
+  '.....dUUUd......',
+];
 // Loot stash — the sack of gems you drop when you die
 const STASH = [
   '...NNNN...',
@@ -732,6 +749,7 @@ export function makeSprites(scene) {
   single(scene, 'checkpoint', CHECKPOINT);
   single(scene, 'crown', CROWN);
   single(scene, 'stash', STASH);
+  single(scene, 'boulder', BOULDER);
 
   // ore pickup sprites (8x8 chunks tinted at runtime)
   const chunk = scene.textures.createCanvas('chunk', 8, 8);

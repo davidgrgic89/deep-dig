@@ -40,17 +40,25 @@ export class Boulder extends Phaser.Physics.Arcade.Sprite {
       this.setAngle(Math.sin(time / 55) * 4);
       if (time > this.shakeUntil) {
         this.phase = 'fall';
+        this.crushOnLand = true;   // it will smash the first block it lands on
         this.setPosition(this.homeX, this.y);
         this.setAngle(0);
         this.body.setAllowGravity(true);
       }
     } else if (this.phase === 'fall') {
       if ((b.blocked.down || b.touching.down) && Math.abs(b.velocity.y) < 24) {
-        this.phase = 'rest';
-        this.setVelocity(0, 0);
         Sfx.thud();
         this.scene.cameras.main.shake(120, 0.006);
         this.scene.fx?.dust(this.x, this.y + 8, 6);
+        if (this.crushOnLand && this.scene.boulderCrushTile(this)) {
+          // smashed the block beneath it — drop into the gap and keep falling
+          this.crushOnLand = false;
+          this.setVelocityY(40);
+          return;
+        }
+        this.phase = 'rest';
+        this.crushOnLand = false;
+        this.setVelocity(0, 0);
       }
     }
   }

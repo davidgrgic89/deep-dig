@@ -39,6 +39,7 @@ const P = {
 
   GROUND_STICK_MS: 70,   // smooth 1-2 frame ground flicker on tile edges
   LAND_MIN_FALL: 120,    // only squash/dust on a real fall, not edge jitter
+  SAFE_FALL_TILES: 8,    // drops up to this many tiles hurt nothing
 };
 export const SWING_MS = P.SWING_MS;
 
@@ -62,6 +63,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.wasOnGround = false;
     this.wasGrounded = false;
     this.fellSpeed = 0;
+    this.apexY = y;
     this.lastLandAt = -9999;
     this.climbing = false;
     this.lastLadderAt = -9999;
@@ -108,12 +110,19 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     const grounded = onGround ||
       (time - this.lastGroundedAt < P.GROUND_STICK_MS && !this.isJumping &&
        body.velocity.y >= -20 && body.velocity.y < 140);
-    if (grounded && !this.wasGrounded && this.fellSpeed > P.LAND_MIN_FALL &&
-        time - this.lastLandAt > 150) {
-      this.lastLandAt = time;
-      this.land();
+    if (grounded && !this.wasGrounded) {
+      if (this.fellSpeed > P.LAND_MIN_FALL && time - this.lastLandAt > 150) {
+        this.lastLandAt = time;
+        this.land();
+      }
+      // fall damage: how far did we drop from the highest point since leaving ground?
+      const fellTiles = (this.y - (this.apexY ?? this.y)) / 16;
+      if (fellTiles > P.SAFE_FALL_TILES && !this.dead && !this.climbing) {
+        this.scene.applyFallDamage(fellTiles, this.x);
+      }
     }
     this.fellSpeed = grounded ? 0 : Math.max(this.fellSpeed, body.velocity.y);
+    this.apexY = grounded ? this.y : Math.min(this.apexY ?? this.y, this.y);
 
     if (input.jumpPressed) this.jumpPressedAt = time;
 
@@ -136,6 +145,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       this.wasOnGround = onGround;
       this.wasGrounded = onGround;
       this.fellSpeed = 0;
+      this.apexY = this.y; // climbing resets the fall tracker
       return;
     }
 
@@ -158,6 +168,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
         this.updateAnim(onGround);
         this.wasOnGround = onGround;
         this.wasGrounded = onGround;
+        this.apexY = this.y; // dashing resets the fall tracker
         this.placePick();
         return;
       }

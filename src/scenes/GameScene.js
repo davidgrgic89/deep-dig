@@ -113,9 +113,7 @@ export default class GameScene extends Phaser.Scene {
     this.physics.add.collider(this.boulders, this.layer);
     this.physics.add.collider(this.boulders, this.boulders);
     this.physics.add.collider(this.player, this.boulders, (pl, bd) => {
-      if (bd.phase === 'fall' && bd.body.velocity.y > 90 && bd.y < pl.y + 2) {
-        this.damagePlayer(bd.x, 1);
-      }
+      if (bd.phase === 'fall' && bd.body.velocity.y > 80 && bd.y < pl.y + 2) this.crushByBoulder(bd);
     });
     this.physics.add.collider(this.enemies, this.boulders, undefined, terrainBound, this);
 
@@ -869,14 +867,15 @@ export default class GameScene extends Phaser.Scene {
     });
     if (hitEnemy) return;
 
-    // boulders can be smashed (so a fallen one never permanently blocks a path)
+    // boulders resist the pickaxe — only the BOULDER DRILL can smash them
     let hitBoulder = false;
     this.boulders.getChildren().forEach((bd) => {
       if (!bd.active || hitBoulder) return;
       if (Phaser.Math.Distance.Between(bd.x, bd.y, hx, hy) < 16 ||
           Phaser.Math.Distance.Between(bd.x, bd.y, player.x, player.y) < 16) {
-        bd.hit(this.registry.get('pickTier'));
-        hitBoulder = true;
+        if (this.registry.get('upgrades').drill) bd.hit(3);
+        else { Sfx.clank(); this.fx.burst(bd.x, bd.y, 0x8a94a2, 3); }
+        hitBoulder = true; // either way the swing is spent on the boulder
       }
     });
     if (hitBoulder) return;
@@ -1066,6 +1065,40 @@ export default class GameScene extends Phaser.Scene {
     if (r.get('hp') <= 0) this.die();
   }
 
+  // A falling boulder landing on you is lethal — that's the price of digging
+  // straight under one. (The 1.4s shake is your warning; the Drill clears them.)
+  crushByBoulder(bd) {
+    if (this.gameOver || this.player.dead || this.time.now < this.player.invulnUntil) return;
+    this.cameras.main.shake(320, 0.016);
+    this.fx.burst(this.player.x, this.player.y, 0x8a5e2e, 16);
+    this.registry.set('hp', 0);
+    this.game.events.emit('hud:refresh');
+    this.die();
+  }
+
+  // Fall damage: short drops are free, longer ones bite — scaled by tiles fallen.
+  applyFallDamage(fellTiles, x) {
+    const dmg = Math.min(5, 1 + Math.floor((fellTiles - 8) / 5)); // 8-12:1, 13-17:2, ...
+    if (dmg <= 0) return;
+    this.cameras.main.shake(140, 0.006);
+    this.fx.dust(this.player.x, this.player.y + 11, 8);
+    this.fx.float(this.player.x, this.player.y - 18, 'OUCH!', '#e85c5c');
+    this.damagePlayer(x, dmg);
+  }
+
+  // A landing boulder smashes the single block it comes down on.
+  boulderCrushTile(bd) {
+    const tx = Math.floor(bd.x / T);
+    const ty = Math.floor((bd.body.bottom + 2) / T);
+    const tile = this.layer.getTileAt(tx, ty);
+    if (!tile) return false;
+    const info = TILE_INFO[tile.index];
+    if (!info || tile.index === TILE.BEDROCK || tile.index === TILE.GATE || tile.index === TILE.KEYDOOR) return false;
+    if (info.req && !this.meetsReq(info.req)) return false; // can't crush what it can't break
+    this.breakTile(tile, ty * W + tx, info);
+    return true;
+  }
+
   die() {
     if (this.gameOver) return;
     this.gameOver = true;
@@ -1095,6 +1128,7 @@ export default class GameScene extends Phaser.Scene {
     const atTown = rp.y <= SURFACE * T;
     this.player.setPosition(rp.x, rp.y);
     this.player.setVelocity(0, 0);
+    this.player.apexY = rp.y; // don't count the teleport as a fall
     this.cameras.main.flash(220, 120, 200, 255);
     if (!atTown) this.fx.float(rp.x, rp.y - 20, 'RESPAWN', '#9ae8f2');
     this.save();
@@ -1285,6 +1319,7 @@ export default class GameScene extends Phaser.Scene {
     this.cameras.main.flash(200, 120, 200, 255);
     this.player.setPosition(p.x, p.y - 14);
     this.player.setVelocity(0, 0);
+    this.player.apexY = p.y - 14; // don't count the teleport as a fall
     if (p.y <= (SURFACE + 1) * T) this.arriveInTown(); // a surface town pad
   }
 
@@ -1292,6 +1327,7 @@ export default class GameScene extends Phaser.Scene {
     const s = this.registry.get('spawnPoint');
     this.player.setPosition(s.x, s.y);
     this.player.setVelocity(0, 0);
+    this.player.apexY = s.y; // don't count the teleport as a fall
     this.cameras.main.flash(200, 120, 200, 255);
     this.arriveInTown();
   }
@@ -1398,6 +1434,7 @@ export default class GameScene extends Phaser.Scene {
     if (kind === 'east' && !u.firePick) stock.push({ id: 'firePick', name: 'FIRE PICK', desc: 'Melts ICE blocks in the deep frost', cost: 1500, cur: 'coins' });
     if (kind === 'lava' && !u.waterGun) stock.push({ id: 'waterGun', name: 'WATER GUN', desc: 'G sprays LAVA/HOT ROCK into cool stone', cost: 1400, cur: 'coins' });
     if (deep) stock.push({ id: 'ladder', name: 'Rope Ladder x3', desc: 'L drops a ladder to climb up', cost: 90, cur: 'coins' });
+    if (!u.drill) stock.push({ id: 'drill', name: 'BOULDER DRILL', desc: 'Lets the pickaxe smash boulders', cost: 350, cur: 'coins' });
     stock.push({ id: 'kit', name: 'Teleporter Kit', desc: 'T places a camp portal', cost: 75, cur: 'coins' });
     if (r.get('powers').dynamite) stock.push({ id: 'dyna', name: 'Dynamite x3', desc: 'K goes boom', cost: 60, cur: 'coins' });
     if (!u.armor) stock.push({ id: 'armor', name: 'Leather Armor', desc: 'Halves damage taken', cost: 6, cur: 'orbs' });

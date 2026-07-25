@@ -289,21 +289,23 @@ export default class GameScene extends Phaser.Scene {
 
   buildDistrict({ shaft, tint, portalName, portalTint, people }) {
     const gy = SURFACE * T;
+    // Keep the shop (and its keeper) well clear of the portal so you can't hit
+    // the portal menu when you mean to open the shop.
     const props = [
-      ['bldg_house', (shaft - 11) * T, 0], ['bldg_shop', (shaft - 5) * T, 0],
-      ['barrel', (shaft - 8) * T, 0], ['lamppost', (shaft - 12.5) * T, 0],
+      ['bldg_house', (shaft - 18) * T, 0], ['bldg_shop', (shaft - 11) * T, 0],
+      ['barrel', (shaft - 7.5) * T, 0], ['lamppost', (shaft - 14) * T, 0],
       ['lamppost', (shaft + 5) * T, 0], ['minehead', shaft * T + 8, 4],
-      ['bldg_house', (shaft + 9) * T, 0],
+      ['bldg_house', (shaft + 12) * T, 0],
     ];
     for (const [key, x, dy] of props) {
       const img = this.add.image(x, gy + dy, key).setOrigin(0.5, 1).setDepth(2).setTint(tint);
       if (key === 'minehead') img.setDepth(4);
     }
-    const at = [-5, 2, 9];
+    const at = [-10, 2, 9]; // shopkeeper far left, Gus, mayor — none near the portal
     people.forEach(([spr, name, dialog], i) => {
       this.npcs.push(this.makeNpc(spr, (shaft + at[i]) * T, gy, name, dialog, tint));
     });
-    const portal = { name: portalName, x: (shaft - 3) * T, y: gy };
+    const portal = { name: portalName, x: (shaft - 4) * T, y: gy };
     this.add.image(portal.x, gy - 1, 'portal').setOrigin(0.5, 1).setDepth(2).setTint(portalTint);
     this.portalGlow(portal.x, gy - 18, portalTint);
     return portal;
@@ -336,7 +338,10 @@ export default class GameScene extends Phaser.Scene {
     addWall((W - 0.9) * T);
     for (const rift of [this.riftFrost, this.riftLava]) {
       if (!this.registry.get(rift.unlockKey)) {
-        rift.wall = addWall(rift.col * T, (SURFACE + 4) * T, (SURFACE + 2) * T);
+        // Tall enough that even a double jump can't clear it: top well above the
+        // sky, bottom sunk into the surface. Removed once the rift is unlocked.
+        const top = -14 * T, bottom = (SURFACE + 4) * T;
+        rift.wall = addWall(rift.col * T, bottom - top, (top + bottom) / 2);
       }
     }
     this.physics.add.collider(this.player, this.barriers);

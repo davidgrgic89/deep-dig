@@ -38,6 +38,24 @@ export const ZONES_L = [
 ];
 export const IDOL_ROW = 254; // finale chamber below the last gate (every region)
 
+// Golden relics — hidden collectibles (4 per region) sealed in little vaults with
+// a single dug-in entrance. Found ones are shown off in the surface museum.
+// `region` matches REGIONS[].id (0 desert, 1 frost, 2 lava).
+export const ARTIFACTS = [
+  { id: 'd1', region: 0, icon: 'relic_scarab',    name: 'Scarab of Sundrop',   blurb: 'A jeweled beetle the first miners buried for luck.' },
+  { id: 'd2', region: 0, icon: 'relic_medallion', name: 'Sun Medallion',       blurb: 'Gold stamped with the blazing desert sun.' },
+  { id: 'd3', region: 0, icon: 'relic_chalice',   name: 'Dust Chalice',        blurb: 'A ceremonial cup, still gleaming after ages of sand.' },
+  { id: 'd4', region: 0, icon: 'relic_idolette',  name: 'Little Golden Idol',  blurb: 'A palm-sized cousin of the great Idol far below.' },
+  { id: 'f1', region: 1, icon: 'relic_amulet',    name: 'Frostheart Amulet',   blurb: 'An everfrozen gem set in silvered gold.' },
+  { id: 'f2', region: 1, icon: 'relic_ring',      name: 'Glacier Ring',        blurb: 'The air around it never warms.' },
+  { id: 'f3', region: 1, icon: 'relic_chalice',   name: 'Frozen Chalice',      blurb: 'Rimed with ice that simply will not thaw.' },
+  { id: 'f4', region: 1, icon: 'relic_mask',      name: 'Mask of the Throne',  blurb: 'Worn by the silent guardians of the Frozen Throne.' },
+  { id: 'l1', region: 2, icon: 'relic_medallion', name: 'Ember Medallion',     blurb: 'Warm to the touch, forged deep in the Molten Halls.' },
+  { id: 'l2', region: 2, icon: 'relic_scarab',    name: 'Cinder Scarab',       blurb: 'A firebeetle cast in red gold.' },
+  { id: 'l3', region: 2, icon: 'relic_mask',      name: 'Magma Mask',          blurb: 'Its hollow eyes still glow like banked coals.' },
+  { id: 'l4', region: 2, icon: 'relic_idolette',  name: 'Heartstone Idol',     blurb: 'A shard of the Volcano\'s Heart, or so they whisper.' },
+];
+
 // region descriptors
 export const REGIONS = [
   { id: 0, shaftX: SHAFT_X, xMin: 93, xMax: 138, theme: 'desert', zones: ZONES },
@@ -104,6 +122,7 @@ export function generateWorld(seedNum = 7) {
   const checkpoints = []; // {x,y,region}
   const boulders = [];    // {x,y}  heavy rocks resting on cave floors
   const keys = [];        // {x,y}  dungeon keys
+  const artifacts = [];   // {x,y,id}  hidden golden relics (museum collectibles)
   let dungeon = null;     // {x,y}  fireproof-suit vault location (lava region)
   const at = (x, y) => grid[y * W + x];
   const set = (x, y, v) => { if (x >= 0 && x < W && y >= 0 && y < H) grid[y * W + x] = v; };
@@ -347,6 +366,39 @@ export function generateWorld(seedNum = 7) {
       stampRoom(ROOM_TREASURE, sideB(), yAt(0.15), {});
     }
 
+    // ---- hidden relic vaults: one little chamber per region artifact. A 2x2 air
+    // pocket framed in bedrock with a SINGLE 2-tall diggable doorway facing the
+    // shaft — so you have to dig your way in from exactly one side. Off the shaft.
+    const regionRelics = ARTIFACTS.filter((a) => a.region === reg.id);
+    const relicSlots = [
+      { z: 0, side: -1, yf: 0.50 },
+      { z: 1, side: 1, yf: 0.38 },
+      { z: 1, side: -1, yf: 0.76 },
+      { z: 2, side: 1, yf: 0.55 },
+    ];
+    const stampVault = (ax, ay, dir, id) => {
+      const inCols = [ax, ax - dir];
+      const x0 = Math.min(ax, ax - dir) - 1, x1 = Math.max(ax, ax - dir) + 1;
+      // frame the box in bedrock (never overwrite a gate)...
+      for (let yy = ay - 2; yy <= ay + 1; yy++)
+        for (let xx = x0; xx <= x1; xx++)
+          if (at(xx, yy) !== TILE.GATE) set(xx, yy, TILE.BEDROCK);
+      // ...carve the 2x2 interior...
+      for (const cy of [ay - 1, ay]) for (const cx of inCols) set(cx, cy, TILE.EMPTY);
+      // ...and punch the doorway: two diggable tiles on the shaft-facing side.
+      set(ax + dir, ay, strataTile(reg.theme, ay));
+      set(ax + dir, ay - 1, strataTile(reg.theme, ay - 1));
+      artifacts.push({ x: ax, y: ay, id });
+    };
+    regionRelics.forEach((a, i) => {
+      const slot = relicSlots[i % relicSlots.length];
+      const zone = ZONES[slot.z];
+      const ay = Math.round(zone.top + (zone.bottom - zone.top) * slot.yf);
+      const ax = Math.max(reg.xMin + 3, Math.min(reg.xMax - 3,
+        reg.shaftX + slot.side * (9 + Math.floor(rnd() * 6))));
+      stampVault(ax, ay, reg.shaftX >= ax ? 1 : -1, a.id);
+    });
+
     // gates
     for (let z = 0; z < 3; z++) {
       const row = ZONES[z].gateRow;
@@ -438,7 +490,7 @@ export function generateWorld(seedNum = 7) {
   const idol = { x: SHAFT_X, y: IDOL_ROW };
   const crown = { x: SHAFT_X2, y: IDOL_ROW };
   const heart = { x: SHAFT_X3, y: IDOL_ROW };  // lava finale — Heart of the Volcano
-  return { grid, spawns, shrines, stones, gates, mushrooms, chests, checkpoints, boulders, keys, dungeon, idol, crown, heart };
+  return { grid, spawns, shrines, stones, gates, mushrooms, chests, checkpoints, boulders, keys, artifacts, dungeon, idol, crown, heart };
 }
 
 // which zone (0..2) a tile row belongs to; -1 = surface/sky

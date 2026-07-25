@@ -6,7 +6,7 @@ import { Boulder } from '../boulder.js';
 import { TILE, TILE_INFO, ORES } from '../art.js';
 import {
   T, W, H, SURFACE, SHAFT_X, SHAFT_X2, SHAFT_X3, DIVIDER, DIVIDER2,
-  ZONES, ZONES_R, ZONES_L, IDOL_ROW,
+  ZONES, ZONES_R, ZONES_L, IDOL_ROW, ARTIFACTS,
   generateWorld, zoneOfRow, regionOfX, zoneName, bgTileAt,
 } from '../world.js';
 
@@ -175,6 +175,7 @@ export default class GameScene extends Phaser.Scene {
     d('placedPortals', []);     // [{x,y}] teleporter kits placed
     d('dugTiles', []);          // indices of removed tiles
     d('activatedCheckpoints', []); // indices of lit checkpoint temples
+    d('foundArtifacts', []);    // ids of golden relics collected for the museum
     const townSpawn = { x: (SHAFT_X - 8) * T, y: (SURFACE - 1) * T };
     r.set('spawnPoint', townSpawn);
     d('respawnPoint', townSpawn); // where death sends you (last checkpoint, or town)
@@ -189,7 +190,7 @@ export default class GameScene extends Phaser.Scene {
       'takenChests', 'carriedStones', 'placedPortals', 'dugTiles',
       'activatedCheckpoints', 'respawnPoint', 'ropeLadders', 'rightUnlocked',
       'idolClaimed', 'deathStash', 'lavaUnlocked', 'crownClaimed', 'heartClaimed',
-      'dungeonKeys', 'skin']) data[k] = r.get(k);
+      'dungeonKeys', 'skin', 'foundArtifacts']) data[k] = r.get(k);
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch { /* storage full/blocked */ }
   }
 
@@ -285,6 +286,15 @@ export default class GameScene extends Phaser.Scene {
     // two rifts + the map-edge signs
     this.riftFrost = this.buildRift(DIVIDER, 'rightUnlocked', 0xb07aff, 'THE RIFT', 'SEALED\nRIFT');
     this.riftLava = this.buildRift(DIVIDER2, 'lavaUnlocked', 0xff7a2a, 'EMBER RIFT', 'SEALED\nEMBER RIFT');
+
+    // Museum of Relics — home town (desert), off to the right of the mine
+    const gy = SURFACE * T, mx = (SHAFT_X + 16) * T;
+    this.add.image(mx, gy + 1, 'bldg_museum').setOrigin(0.5, 1).setDepth(2);
+    this.add.text(mx, gy - 66, 'MUSEUM', {
+      fontFamily: '"Press Start 2P"', fontSize: '6px', color: '#f2d75c',
+      stroke: '#3a2410', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(6);
+    this.museum = { x: mx, y: gy };
   }
 
   buildDistrict({ shaft, tint, portalName, portalTint, people }) {
@@ -485,6 +495,20 @@ export default class GameScene extends Phaser.Scene {
       this.suitSprite = this.add.image(px, py, 'suit').setOrigin(0.5, 1).setDepth(5);
       this.tweens.add({ targets: this.suitSprite, y: py - 3, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
       this.portalGlow(px, py - 8, 0xe8721f);
+    }
+
+    // hidden golden relics (museum collectibles) — one glowing icon per vault
+    this.artifactSprites = [];
+    const found = this.registry.get('foundArtifacts') || [];
+    for (const a of (this.world.artifacts || [])) {
+      if (found.includes(a.id)) continue;
+      const meta = ARTIFACTS.find((m) => m.id === a.id);
+      if (!meta) continue;
+      const px = a.x * T + 8, py = a.y * T + 12;
+      const spr = this.add.image(px, py, meta.icon).setDepth(5).setScale(1.05);
+      this.tweens.add({ targets: spr, y: py - 3, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+      this.portalGlow(px, py - 4, 0xf2d75c).setDepth(51);
+      this.artifactSprites.push({ id: a.id, px, py, spr });
     }
 
     // a loot stash left from a previous death
@@ -775,6 +799,20 @@ export default class GameScene extends Phaser.Scene {
     }
     if (this.suitSprite && this.suitSprite.active && near(this.suitSprite.x, this.suitSprite.y - 6, 18)) {
       this.takeSuit();
+    }
+    // golden relics — walk into one to collect it for the museum
+    for (const a of (this.artifactSprites || [])) {
+      if (a.spr.active && near(a.px, a.py, 16)) this.takeArtifact(a);
+    }
+    // Museum of Relics (surface, home town) — press E to view your collection
+    if (this.museum && near(this.museum.x, this.museum.y - 14, 26)) {
+      const found = this.registry.get('foundArtifacts') || [];
+      hint = `E — Museum of Relics (${found.length}/${ARTIFACTS.length})`;
+      if (input.interactPressed) {
+        this.uiOpen = true;
+        Sfx.talk();
+        this.game.events.emit('museum:open', this.museumData());
+      }
     }
     // death-loot stash — recover your dropped gems
     if (this.stashSprite && this.stashSprite.active && near(this.stashSprite.x, this.stashSprite.y - 4, 20)) {
@@ -1237,6 +1275,37 @@ export default class GameScene extends Phaser.Scene {
     this.fx.float(c.px, c.py - 10, `+${amount} COINS`, '#f2d75c');
     this.game.events.emit('hud:refresh');
     this.save();
+  }
+
+  takeArtifact(a) {
+    a.spr.destroy();
+    const r = this.registry;
+    const found = r.get('foundArtifacts');
+    if (found.includes(a.id)) return;
+    found.push(a.id);
+    const meta = ARTIFACTS.find((m) => m.id === a.id);
+    Sfx.powerup();
+    this.fx.burst(a.px, a.py, 0xf2d75c, 16);
+    this.fx.float(a.px, a.py - 12, 'RELIC!', '#f2d75c');
+    this.game.events.emit('dialog:show', {
+      name: 'Golden Relic',
+      lines: [`You found the ${meta.name}!`, meta.blurb,
+        `Relic ${found.length} of ${ARTIFACTS.length} — show it off at the Museum in town.`],
+    });
+    this.uiOpen = true;
+    this.save();
+    this.game.events.emit('hud:refresh');
+  }
+
+  // snapshot for the museum panel: every relic, flagged found or not
+  museumData() {
+    const found = this.registry.get('foundArtifacts') || [];
+    return {
+      items: ARTIFACTS.map((m) => ({
+        name: m.name, blurb: m.blurb, icon: m.icon,
+        region: m.region, found: found.includes(m.id),
+      })),
+    };
   }
 
   openGate(gate) {

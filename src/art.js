@@ -802,6 +802,108 @@ export function makeTiles(scene) {
 }
 
 // ---------------------------------------------------------------------------
+// Golden relics — hidden collectibles shown off in the surface museum. All 12x12,
+// carved from gold (l/L/y/Y) with the odd gem (z/Z ice, a red) and dark seams (E).
+const RELIC_SCARAB = [
+  '............',
+  '....LyyL....',
+  '...LlEElL...',
+  '..LllEEllL..',
+  '..LlEllElL..',
+  '..LllEEllL..',
+  '..LllEEllL..',
+  '...LlEElL...',
+  '....LLLL....',
+  '............',
+  '............',
+  '............',
+];
+const RELIC_MEDALLION = [
+  '............',
+  '....LLLL....',
+  '...LyllyL...',
+  '..LllEEllL..',
+  '..LlEiiElL..',
+  '..LlEiiElL..',
+  '..LllEEllL..',
+  '...LyllyL...',
+  '....LLLL....',
+  '.....ll.....',
+  '............',
+  '............',
+];
+const RELIC_CHALICE = [
+  '............',
+  '..LllllllL..',
+  '..LyllllyL..',
+  '...LllllL...',
+  '....LllL....',
+  '.....LL.....',
+  '.....ll.....',
+  '....LllL....',
+  '...LllllL...',
+  '..LLLLLLLL..',
+  '............',
+  '............',
+];
+const RELIC_IDOLETTE = [
+  '............',
+  '....LLLL....',
+  '...LlEElL...',
+  '...LllllL...',
+  '...LlEElL...',
+  '...LllllL...',
+  '..LLllllLL..',
+  '..LllllllL..',
+  '..LlLllLlL..',
+  '..LLLLLLLL..',
+  '............',
+  '............',
+];
+const RELIC_AMULET = [
+  '............',
+  '...L....L...',
+  '...L....L...',
+  '....L..L....',
+  '....LzzL....',
+  '...LzZZzL...',
+  '..LzZaaZzL..',
+  '...LzZZzL...',
+  '....LzzL....',
+  '.....LL.....',
+  '............',
+  '............',
+];
+const RELIC_RING = [
+  '............',
+  '.....zz.....',
+  '....zZZz....',
+  '....LllL....',
+  '...Ll..lL...',
+  '..Ll....lL..',
+  '..Ll....lL..',
+  '..Ll....lL..',
+  '...Ll..lL...',
+  '....LllL....',
+  '.....LL.....',
+  '............',
+];
+const RELIC_MASK = [
+  '............',
+  '..LLLLLLLL..',
+  '.LllllllllL.',
+  '.LlEEllEElL.',
+  '.LllllllllL.',
+  '.LllEllEllL.',
+  '.LlllllllL..',
+  '..LlllllL...',
+  '...LlllL....',
+  '....LL......',
+  '............',
+  '............',
+];
+
+// ---------------------------------------------------------------------------
 export function makeSprites(scene) {
   const playerFrames = [
     playerFrame('idle'), playerFrame('walk1'), playerFrame('idle'),
@@ -835,6 +937,14 @@ export function makeSprites(scene) {
   single(scene, 'water', WATER);
   single(scene, 'key', KEY);
   single(scene, 'suit', SUIT);
+  // golden relics (museum collectibles)
+  single(scene, 'relic_scarab', RELIC_SCARAB);
+  single(scene, 'relic_medallion', RELIC_MEDALLION);
+  single(scene, 'relic_chalice', RELIC_CHALICE);
+  single(scene, 'relic_idolette', RELIC_IDOLETTE);
+  single(scene, 'relic_amulet', RELIC_AMULET);
+  single(scene, 'relic_ring', RELIC_RING);
+  single(scene, 'relic_mask', RELIC_MASK);
 
   // ore pickup sprites (8x8 chunks tinted at runtime)
   const chunk = scene.textures.createCanvas('chunk', 8, 8);
@@ -918,6 +1028,26 @@ export function makeProps(scene) {
     g.fillStyle = '#7c2020'; g.fillRect(0, 16, 60, 3);
     g.fillStyle = '#2c1c0c'; g.fillRect(24, 30, 14, 22);
     g.fillStyle = '#78d8f0'; g.fillRect(8, 28, 10, 10); g.fillRect(44, 28, 10, 10);
+  });
+  // Museum of Relics — a little marble-columned hall with a gold pediment
+  canvasTex(scene, 'bldg_museum', 72, 60, (g) => {
+    g.fillStyle = '#d8cdb2'; g.fillRect(4, 20, 64, 40);         // stone body
+    g.fillStyle = '#c3b593'; g.fillRect(4, 20, 64, 3);          // architrave shadow
+    // columns
+    g.fillStyle = '#eee4c8';
+    for (let x = 8; x <= 60; x += 13) g.fillRect(x, 24, 6, 34);
+    g.fillStyle = '#c3b593';
+    for (let x = 8; x <= 60; x += 13) { g.fillRect(x, 24, 6, 2); g.fillRect(x, 56, 6, 2); g.fillRect(x + 5, 24, 1, 34); }
+    g.fillStyle = '#b0a074'; g.fillRect(2, 58, 68, 2);          // base step
+    // pediment (triangular roof)
+    g.fillStyle = '#e8d072'; g.beginPath();
+    g.moveTo(0, 20); g.lineTo(36, 2); g.lineTo(72, 20); g.closePath(); g.fill();
+    g.fillStyle = '#c8a83e'; g.beginPath();
+    g.moveTo(0, 20); g.lineTo(36, 2); g.lineTo(36, 6); g.lineTo(6, 20); g.closePath(); g.fill();
+    g.fillStyle = '#8a6c30'; g.fillRect(30, 9, 12, 9);          // relic emblem in the gable
+    g.fillStyle = '#f2d75c'; g.fillRect(33, 11, 6, 6);
+    g.fillStyle = '#2c2416'; g.fillRect(30, 40, 12, 20);        // doorway
+    g.fillStyle = '#5c4820'; g.fillRect(30, 40, 12, 2);
   });
   // mine head-frame over the shaft
   canvasTex(scene, 'minehead', 52, 46, (g) => {

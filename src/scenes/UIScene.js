@@ -14,7 +14,7 @@ export default class UIScene extends Phaser.Scene {
 
   create() {
     const { width: SW, height: SH } = this.scale;
-    this.mode = null; // null | 'dialog' | 'shop' | 'portal' | 'won'
+    this.mode = null; // null | 'dialog' | 'shop' | 'portal' | 'museum' | 'won'
 
     // ---- HUD ------------------------------------------------------------
     this.hearts = [];
@@ -56,6 +56,7 @@ export default class UIScene extends Phaser.Scene {
     on('dialog:show', (d) => this.showDialog(d));
     on('shop:open', (stock) => this.showShop(stock));
     on('portal:open', (data) => this.showPortals(data));
+    on('museum:open', (data) => this.showMuseum(data));
     on('hud:death', () => this.deathFlash());
     on('game:won', (stats) => this.showWin(stats));
 
@@ -458,6 +459,45 @@ export default class UIScene extends Phaser.Scene {
     });
   }
 
+  // ---- museum of relics -------------------------------------------------
+  showMuseum({ items }) {
+    this.clearPanel();
+    this.mode = 'museum';
+    const foundCount = items.filter((i) => i.found).length;
+    const cols = 4, cellW = 116, cellH = 88;
+    const w = cols * cellW + 92, h = 3 * cellH + 104;
+    const { x, y } = this.panelBox(w, h, 'MUSEUM OF RELICS');
+    const sub = this.add.text(x, y - h / 2 + 40,
+      `${foundCount} / ${items.length} relics recovered`,
+      TXT(9, foundCount === items.length ? '#f2d75c' : '#b8d8a0')).setOrigin(0.5);
+    this.panel.add(sub);
+    const gx = x - (cols * cellW) / 2 + cellW / 2;
+    const gy = y - h / 2 + 74;
+    items.forEach((it, i) => {
+      const cx = gx + (i % cols) * cellW;
+      const cy = gy + Math.floor(i / cols) * cellH;
+      const box = this.add.rectangle(cx, cy + 22, cellW - 14, cellH - 12,
+        it.found ? 0x2a2212 : 0x141017).setStrokeStyle(2, it.found ? 0x8a6c30 : 0x36303f);
+      this.panel.add(box);
+      if (it.found) {
+        const icon = this.add.image(cx, cy + 6, it.icon).setScale(2.6);
+        const nm = this.add.text(cx, cy + 34, it.name,
+          { ...TXT(6, '#f2e6c9'), align: 'center', wordWrap: { width: cellW - 22 } }).setOrigin(0.5, 0);
+        this.panel.add([icon, nm]);
+      } else {
+        const q = this.add.text(cx, cy + 6, '?', TXT(18, '#4a4458')).setOrigin(0.5);
+        const nm = this.add.text(cx, cy + 34, 'UNDISCOVERED', TXT(6, '#6a6270')).setOrigin(0.5, 0);
+        this.panel.add([q, nm]);
+      }
+    });
+    ['DESERT', 'FROST', 'LAVA'].forEach((rn, r) => {
+      const lbl = this.add.text(x - w / 2 + 12, gy + r * cellH + 22, rn, TXT(7, '#9a8c72')).setOrigin(0, 0.5);
+      this.panel.add(lbl);
+    });
+    const foot = this.add.text(x, y + h / 2 - 20, 'ESC / E — leave', TXT(8, '#b8b09a')).setOrigin(0.5);
+    this.panel.add(foot);
+  }
+
   // ---- win --------------------------------------------------------------
   showWin({ coins, orbs }) {
     this.clearPanel();
@@ -483,7 +523,7 @@ export default class UIScene extends Phaser.Scene {
   }
 
   menuConfirm() {
-    if (this.mode === 'dialog' || this.mode === 'won') { Sfx.select(); this.closePanel(); return; }
+    if (this.mode === 'dialog' || this.mode === 'won' || this.mode === 'museum') { Sfx.select(); this.closePanel(); return; }
     if (this.mode === 'shop') {
       this.game.events.emit('shop:buy', this.stock[this.sel]);
     } else if (this.mode === 'portal') {
@@ -501,7 +541,7 @@ export default class UIScene extends Phaser.Scene {
   handleKey(ev) {
     if (!this.mode) return;
     const code = ev.code;
-    if (this.mode === 'dialog' || this.mode === 'won') {
+    if (this.mode === 'dialog' || this.mode === 'won' || this.mode === 'museum') {
       if (code === 'Escape' || code === 'KeyE' || code === 'Enter' || code === 'Space') this.menuConfirm();
       return;
     }

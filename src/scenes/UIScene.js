@@ -1,6 +1,9 @@
 import Phaser from 'phaser';
 import Sfx from '../audio.js';
 import { ORES } from '../art.js';
+import { SURFACE } from '../world.js';
+import { renderMapTexture, MAP_TOP, MAP_ROWS, MARKS } from '../minimap.js';
+import { buildJournal } from '../journal.js';
 
 const FONT = '"Press Start 2P"';
 const TXT = (size, color = '#f2e6c9') => ({
@@ -14,7 +17,7 @@ export default class UIScene extends Phaser.Scene {
 
   create() {
     const { width: SW, height: SH } = this.scale;
-    this.mode = null; // null | 'dialog' | 'shop' | 'portal' | 'museum' | 'won'
+    this.mode = null; // null | 'dialog' | 'shop' | 'portal' | 'museum' | 'map' | 'journal' | 'won'
 
     // ---- HUD ------------------------------------------------------------
     this.hearts = [];
@@ -24,12 +27,20 @@ export default class UIScene extends Phaser.Scene {
     this.dynaText = this.add.text(16, 100, '', TXT(10, '#e88b3a')).setDepth(10);
     this.kitText = this.add.text(16, 120, '', TXT(10, '#a8d8b8')).setDepth(10);
     this.ladderText = this.add.text(16, 140, '', TXT(10, '#8fd8a0')).setDepth(10);
-    this.depthText = this.add.text(SW - 100, 15, '', TXT(11, '#c8d0dc')).setOrigin(1, 0).setDepth(10);
+    // sits left of the QUESTS/MAP/pause/fullscreen icon row along the top edge
+    this.depthText = this.add.text(SW - 200, 15, '', TXT(11, '#c8d0dc')).setOrigin(1, 0).setDepth(10);
 
     // lantern bar
     this.lampBarBg = this.add.rectangle(SW - 16, 44, 120, 10, 0x14100a).setOrigin(1, 0).setDepth(10).setStrokeStyle(2, 0x5c4820);
     this.lampBar = this.add.rectangle(SW - 18, 46, 116, 6, 0xf2d75c).setOrigin(1, 0).setDepth(11);
     this.lampLabel = this.add.text(SW - 140, 42, 'LAMP', TXT(8, '#c8b060')).setOrigin(1, 0).setDepth(10);
+
+    // current objective, straight from the journal — the one line that tells a
+    // new player what this whole world wants from them
+    this.objLabel = this.add.text(SW - 16, 64, 'OBJECTIVE', TXT(7, '#c8b060')).setOrigin(1, 0).setDepth(10);
+    this.objText = this.add.text(SW - 16, 78, '', {
+      ...TXT(8, '#f2d75c'), align: 'right', wordWrap: { width: 250 }, lineSpacing: 4,
+    }).setOrigin(1, 0).setDepth(10);
 
     this.hintText = this.add.text(SW / 2, SH - 64, '', TXT(9, '#ffffff')).setOrigin(0.5).setDepth(10);
     this.zoneText = this.add.text(SW / 2, 90, '', TXT(16, '#f2d75c')).setOrigin(0.5).setDepth(10).setAlpha(0);
@@ -39,12 +50,14 @@ export default class UIScene extends Phaser.Scene {
 
     // controls hint (fades out)
     this.controls = this.add.text(SW / 2, SH - 30,
-      'MOVE ←→  JUMP SPACE  DIG X (+↑/↓)  TALK/USE E  RECALL hold R  MUTE M',
+      'MOVE ←→  JUMP SPACE  DIG X (+↑/↓)  TALK/USE E  MAP TAB  QUESTS Q  RECALL hold R  MUTE M',
       TXT(8, '#b8b09a')).setOrigin(0.5).setDepth(10);
     this.time.delayedCall(12000, () => this.tweens.add({ targets: this.controls, alpha: 0, duration: 1000 }));
 
     // ---- panels ---------------------------------------------------------
-    this.panel = this.add.container(0, 0).setDepth(20).setVisible(false);
+    // above the HUD, the touch pad (40) and the corner icons (45/46), but below
+    // the pause overlay (70)
+    this.panel = this.add.container(0, 0).setDepth(55).setVisible(false);
 
     // ---- events from the game scene ------------------------------------
     const g = this.game.events;
@@ -57,6 +70,8 @@ export default class UIScene extends Phaser.Scene {
     on('shop:open', (stock) => this.showShop(stock));
     on('portal:open', (data) => this.showPortals(data));
     on('museum:open', (data) => this.showMuseum(data));
+    on('map:open', (data) => this.showMap(data));
+    on('journal:open', (data) => this.showJournal(data));
     on('hud:death', () => this.deathFlash());
     on('game:won', (stats) => this.showWin(stats));
 
@@ -103,6 +118,7 @@ export default class UIScene extends Phaser.Scene {
 
     this.buildFullscreenButton();
     this.buildPauseButton();
+    this.buildPanelButtons();
     this.buildPauseOverlay();
 
     // Auto-pause when the tab/app is hidden or the device screen turns off, so
@@ -158,6 +174,26 @@ export default class UIScene extends Phaser.Scene {
     icon.fillRect(bx - 6, by - 7, 4, 14);
     icon.fillRect(bx + 2, by - 7, 4, 14);
     zone.on('pointerdown', () => this.togglePause());
+  }
+
+  // MAP / QUESTS taps, sitting alongside the pause + fullscreen icons so phone
+  // players can reach both panels without a keyboard. Tapping again closes.
+  buildPanelButtons() {
+    const SW = this.scale.width;
+    const mk = (bx, bw, label, mode, request) => {
+      const zone = this.add.rectangle(bx, 24, bw, 30, 0x000000, 0.28)
+        .setScrollFactor(0).setDepth(45).setInteractive({ useHandCursor: true });
+      this.add.text(bx, 24, label, TXT(7, '#f2e6c9')).setOrigin(0.5)
+        .setScrollFactor(0).setDepth(46);
+      zone.on('pointerdown', () => {
+        if (this.paused) return;
+        if (this.mode === mode) { this.menuCancel(); return; }
+        if (this.mode) return;             // some other panel owns the screen
+        this.game.events.emit(request);
+      });
+    };
+    mk(SW - 104, 40, 'MAP', 'map', 'ui:requestMap');
+    mk(SW - 158, 56, 'QUESTS', 'journal', 'ui:requestJournal');
   }
 
   buildPauseOverlay() {
@@ -301,6 +337,10 @@ export default class UIScene extends Phaser.Scene {
     this.kitText.setText(kits > 0 ? `TELE-KIT x${kits} (T)` : '');
     const ladders = r.get('ropeLadders') || 0;
     this.ladderText.setText(ladders > 0 ? `ROPE LADDER x${ladders} (L)` : '');
+
+    const j = buildJournal(r);
+    this.objText.setText(j.current ? j.current.text : 'Nothing left undone. The world is yours.');
+    this.objLabel.setVisible(true);
   }
 
   setDepthHud(d) {
@@ -498,6 +538,146 @@ export default class UIScene extends Phaser.Scene {
     this.panel.add(foot);
   }
 
+  // ---- world map --------------------------------------------------------
+  // Full-screen panel: the tile map blown up 2x, a depth ruler down the left,
+  // landmark pins, and a blinking dot for you.
+  showMap(data) {
+    this.clearPanel();
+    this.mode = 'map';
+    const { width: SW, height: SH } = this.scale;
+    const S = 2;                                    // screen px per world tile
+    renderMapTexture(this, 'mapview', data.tiles, data.explored);
+    const img = this.add.image(SW / 2, 0, 'mapview').setOrigin(0.5, 0).setScale(S);
+    const mapW = img.width * S, mapH = MAP_ROWS * S;
+    // town name labels sit in the strip above the map, so the map starts low
+    // enough to leave them room
+    const top = 22;
+    img.setY(top);
+    const left = SW / 2 - mapW / 2;
+
+    const bg = this.add.rectangle(SW / 2, SH / 2, SW, SH, 0x07060e, 0.97);
+    const frame = this.add.rectangle(SW / 2, top + mapH / 2, mapW + 4, mapH + 4)
+      .setStrokeStyle(2, 0x8a5e2e);
+    this.panel.add([bg, frame, img]);
+    this.panel.setVisible(true);
+    img.setDepth(1); frame.setDepth(2);
+
+    // tile -> screen
+    const sx = (tx) => left + tx * S;
+    const sy = (ty) => top + (ty - MAP_TOP) * S;
+
+    // depth ruler every 40m, down the left margin
+    for (let m = 0; m <= 250; m += 40) {
+      const y = sy(SURFACE + m);
+      if (y < top || y > top + mapH) continue;
+      const lbl = this.add.text(left - 10, y, `${m}m`, TXT(6, '#8a94a2')).setOrigin(1, 0.5);
+      const tick = this.add.rectangle(left - 6, y, 4, 1, 0x5c5468).setOrigin(0.5);
+      this.panel.add([lbl, tick]);
+    }
+
+    // landmark pins
+    for (const m of data.marks) {
+      const color = MARKS[m.kind] || 0xffffff;
+      const pin = this.add.rectangle(sx(m.tx), sy(m.ty), 5, 5, color).setDepth(3);
+      this.panel.add(pin);
+      if (m.label) {
+        const lbl = this.add.text(sx(m.tx), sy(m.ty) - 8, m.label, TXT(6, '#f2d75c'))
+          .setOrigin(0.5, 1).setDepth(3);
+        this.panel.add(lbl);
+      }
+    }
+
+    // you (blinking, so it never hides under a pin)
+    const me = this.add.rectangle(sx(data.player.tx), sy(data.player.ty), 7, 7, 0xffffff)
+      .setStrokeStyle(1, 0x000000).setDepth(4);
+    this.panel.add(me);
+    this.tweens.add({ targets: me, alpha: 0.15, duration: 420, yoyo: true, repeat: -1 });
+
+    // legend + where you are, tucked into the left margin under the ruler
+    const legend = [
+      ['dug tunnel', 0x8e8272], ['ore vein', ORES.gold.color], ['ladder', 0x8fd8a0],
+      ['sealed gate', 0xb07aff], ['lava', 0xff6a20], ['portal', MARKS.portal],
+      ['camp', MARKS.camp], ['checkpoint', MARKS.checkpoint], ['lost gems', MARKS.stash],
+    ];
+    // title lives in the left margin, clear of the town labels along the top
+    const lx = 18;
+    let ly = 20;
+    const title = this.add.text(lx, ly, 'WORLD MAP', TXT(11, '#f2d75c'));
+    this.panel.add(title);
+    ly += 30;
+    const you = this.add.text(lx, ly, `${data.place}\n${data.depth}m down`,
+      { ...TXT(7, '#f2e6c9'), lineSpacing: 4 });
+    this.panel.add(you);
+    ly += 34;
+    for (const [name, color] of legend) {
+      const sw = this.add.rectangle(lx + 4, ly + 4, 7, 7, color);
+      const lbl = this.add.text(lx + 14, ly, name, TXT(6, '#b8b09a'));
+      this.panel.add([sw, lbl]);
+      ly += 14;
+    }
+
+    const foot = this.add.text(SW / 2, SH - 8, 'TAB / ESC — close      Q — quest journal',
+      TXT(8, '#b8b09a')).setOrigin(0.5, 1);
+    this.panel.add(foot);
+  }
+
+  // ---- quest journal ----------------------------------------------------
+  showJournal(data) {
+    this.clearPanel();
+    this.mode = 'journal';
+    const { width: SW, height: SH } = this.scale;
+    const BOXW = 720;
+    const bg = this.add.rectangle(SW / 2, SH / 2, SW, SH, 0x07060e, 0.97);
+    const box = this.add.rectangle(SW / 2, SH / 2, BOXW, SH - 28, 0x1a140a, 0.98)
+      .setStrokeStyle(3, 0x8a5e2e);
+    const title = this.add.text(SW / 2, 0, 'QUEST JOURNAL', TXT(12, '#f2d75c')).setOrigin(0.5);
+    // entries go in their own container laid out from y=0, so the box can be
+    // sized to whatever the journal actually contains and then centred
+    const content = this.add.container(0, 0);
+    const foot = this.add.text(SW / 2, 0, 'Q / ESC — close      TAB — world map',
+      TXT(8, '#b8b09a')).setOrigin(0.5);
+    this.panel.add([bg, box, title, content, foot]);
+    this.panel.setVisible(true);
+
+    let y = 0;
+    const line = (text, style, indent = 0) => {
+      const t = this.add.text(indent, y, text, style);
+      content.add(t);
+      y += t.height + 3;
+      return t;
+    };
+
+    for (const ch of data.chapters) {
+      y += 6;
+      const done = ch.entries.filter((e) => e.done).length;
+      if (ch.locked) {
+        line(`${ch.name}   [${ch.lockNote}]`, TXT(8, '#5f5a6c'));
+        continue;
+      }
+      line(`${ch.name}   ${done}/${ch.entries.length}`, TXT(9, '#f2d75c'));
+      for (const e of ch.entries) {
+        line(`${e.done ? '✓' : '·'}  ${e.text}`,
+          TXT(8, e.done ? '#6f8a5e' : '#f2e6c9'), 10);
+        if (!e.done && e.detail) line(e.detail, TXT(6, '#9a8c72'), 28);
+      }
+    }
+
+    y += 10;
+    line('Side work', TXT(9, '#78c8f0'));
+    for (const e of data.side) {
+      line(`${e.done ? '✓' : '·'}  ${e.text}`,
+        TXT(8, e.done ? '#6f8a5e' : '#f2e6c9'), 10);
+      if (!e.done && e.detail) line(e.detail, TXT(6, '#9a8c72'), 28);
+    }
+
+    const boxH = Math.min(SH - 20, y + 92);
+    const boxTop = (SH - boxH) / 2;
+    box.setSize(BOXW, boxH);
+    title.setY(boxTop + 22);
+    content.setPosition(SW / 2 - BOXW / 2 + 24, boxTop + 44);
+    foot.setY(boxTop + boxH - 20);
+  }
+
   // ---- win --------------------------------------------------------------
   showWin({ coins, orbs }) {
     this.clearPanel();
@@ -522,8 +702,18 @@ export default class UIScene extends Phaser.Scene {
     this.mode === 'shop' ? this.paintShopSel() : this.paintPortalSel();
   }
 
+  // Close one panel and immediately open the other, so TAB/Q flip between the
+  // map and the journal without a trip back to the game.
+  swapPanel(request) {
+    Sfx.select();
+    this.closePanel();
+    this.game.events.emit(request);
+  }
+
   menuConfirm() {
-    if (this.mode === 'dialog' || this.mode === 'won' || this.mode === 'museum') { Sfx.select(); this.closePanel(); return; }
+    if (['dialog', 'won', 'museum', 'map', 'journal'].includes(this.mode)) {
+      Sfx.select(); this.closePanel(); return;
+    }
     if (this.mode === 'shop') {
       this.game.events.emit('shop:buy', this.stock[this.sel]);
     } else if (this.mode === 'portal') {
@@ -541,6 +731,14 @@ export default class UIScene extends Phaser.Scene {
   handleKey(ev) {
     if (!this.mode) return;
     const code = ev.code;
+    if (this.mode === 'map' || this.mode === 'journal') {
+      // the other panel's key flips straight to it; anything else closes
+      if (code === 'Tab' && this.mode === 'journal') this.swapPanel('ui:requestMap');
+      else if (code === 'KeyQ' && this.mode === 'map') this.swapPanel('ui:requestJournal');
+      else if (code === 'Escape' || code === 'Tab' || code === 'KeyQ'
+               || code === 'KeyE' || code === 'Enter') this.menuConfirm();
+      return;
+    }
     if (this.mode === 'dialog' || this.mode === 'won' || this.mode === 'museum') {
       if (code === 'Escape' || code === 'KeyE' || code === 'Enter' || code === 'Space') this.menuConfirm();
       return;

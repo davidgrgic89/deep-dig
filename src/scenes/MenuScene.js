@@ -50,7 +50,7 @@ export default class MenuScene extends Phaser.Scene {
       { ...TXT(9, '#d8c8a8'), align: 'center', lineSpacing: 8 }).setOrigin(0.5);
     this.add.text(SW / 2, SH * 0.86,
       'MOVE ←→/AD   JUMP SPACE   DIG X or J (+↑/↓ to aim)   INTERACT E\n' +
-      'DASH SHIFT   DYNAMITE K   TELE-KIT T   RECALL hold R   MUTE M',
+      'MAP TAB   QUESTS Q   DASH SHIFT   DYNAMITE K   TELE-KIT T   RECALL hold R   MUTE M',
       { ...TXT(8, '#b8a888'), align: 'center', lineSpacing: 8 }).setOrigin(0.5);
     this.add.text(SW / 2, SH - 18, '↑↓ / tap to choose — ENTER / SPACE / tap to start', TXT(9, '#f2d75c')).setOrigin(0.5);
 

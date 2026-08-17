@@ -9,6 +9,8 @@ import {
   ZONES, ZONES_R, ZONES_L, IDOL_ROW, ARTIFACTS,
   generateWorld, zoneOfRow, regionOfX, zoneName, bgTileAt,
 } from '../world.js';
+import { packExplored, unpackExplored } from '../minimap.js';
+import { buildJournal } from '../journal.js';
 
 const SAVE_KEY = 'deepdig-save-v2';
 
@@ -174,8 +176,12 @@ export default class GameScene extends Phaser.Scene {
     d('deathStash', null);      // {x,y,items:[...]} loot dropped on death
     d('placedPortals', []);     // [{x,y}] teleporter kits placed
     d('dugTiles', []);          // indices of removed tiles
+    d('placedLadders', []);     // indices of rope-ladder tiles you dropped
     d('activatedCheckpoints', []); // indices of lit checkpoint temples
     d('foundArtifacts', []);    // ids of golden relics collected for the museum
+    d('soldOnce', false);       // has the player ever sold a bag? (journal)
+    // map fog-of-war: one byte per tile, saved packed to bits
+    this.explored = unpackExplored(save?.explored, W * H);
     const townSpawn = { x: (SHAFT_X - 8) * T, y: (SURFACE - 1) * T };
     r.set('spawnPoint', townSpawn);
     d('respawnPoint', townSpawn); // where death sends you (last checkpoint, or town)
@@ -187,10 +193,11 @@ export default class GameScene extends Phaser.Scene {
     const data = {};
     for (const k of ['coins', 'orbs', 'maxHp', 'bagCap', 'pickTier', 'lampCap', 'powers',
       'dynamite', 'teleKits', 'upgrades', 'openGates', 'takenShrines', 'takenStones',
-      'takenChests', 'carriedStones', 'placedPortals', 'dugTiles',
+      'takenChests', 'carriedStones', 'placedPortals', 'dugTiles', 'placedLadders',
       'activatedCheckpoints', 'respawnPoint', 'ropeLadders', 'rightUnlocked',
       'idolClaimed', 'deathStash', 'lavaUnlocked', 'crownClaimed', 'heartClaimed',
-      'dungeonKeys', 'skin', 'foundArtifacts']) data[k] = r.get(k);
+      'dungeonKeys', 'skin', 'foundArtifacts', 'soldOnce']) data[k] = r.get(k);
+    if (this.explored) data.explored = packExplored(this.explored);
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch { /* storage full/blocked */ }
   }
 
@@ -204,6 +211,8 @@ export default class GameScene extends Phaser.Scene {
         for (const x of [gate.shaftX - 1, gate.shaftX, gate.shaftX + 1]) this.world.grid[y * W + x] = TILE.EMPTY;
       }
     }
+    // rope ladders go back last, so one dropped into a tunnel you dug survives
+    for (const idx of (this.registry.get('placedLadders') || [])) this.world.grid[idx] = TILE.LADDER;
   }
 
   // ------------------------------------------------------------------- map
@@ -594,7 +603,9 @@ export default class GameScene extends Phaser.Scene {
       dash: add(k.SHIFT), dash2: add(k.C),
       interact: add(k.E), dyna: add(k.K), kit: add(k.T), ladder: add(k.L),
       water: add(k.G), mute: add(k.M), recall: add(k.R), esc: add(k.ESC),
+      map: add(k.TAB), journal: add(k.Q),
     };
+    this.input.keyboard.addCapture('TAB'); // don't let TAB move browser focus
     this.input.keyboard.on('keydown-M', () => {
       const muted = Sfx.toggleMute();
       this.fx.float(this.player.x, this.player.y - 20, muted ? 'MUTED' : 'SOUND ON', '#ffffff');
@@ -620,6 +631,8 @@ export default class GameScene extends Phaser.Scene {
       ladderPressed: jp(K.ladder) || !!t.ladderPressed,
       waterPressed: jp(K.water) || !!t.waterPressed,
       recallDown: K.recall.isDown || !!t.recall,
+      mapPressed: jp(K.map),
+      journalPressed: jp(K.journal),
     };
     // consume one-shot touch edges so they fire exactly once
     if (t.jumpPressed) t.jumpPressed = false;
@@ -635,7 +648,10 @@ export default class GameScene extends Phaser.Scene {
     const g = this.game.events;
     g.removeAllListeners('ui:closed'); g.removeAllListeners('shop:buy');
     g.removeAllListeners('portal:go'); g.removeAllListeners('menu:quit');
+    g.removeAllListeners('ui:requestMap'); g.removeAllListeners('ui:requestJournal');
     g.on('ui:closed', () => { this.uiOpen = false; });
+    g.on('ui:requestMap', () => this.openMap());
+    g.on('ui:requestJournal', () => this.openJournal());
     g.on('shop:buy', (item) => this.tryBuy(item));
     g.on('portal:go', (idx) => this.teleportTo(idx));
     g.on('menu:quit', () => {
@@ -661,6 +677,7 @@ export default class GameScene extends Phaser.Scene {
     this.player.update(time, dtMs, input);
     const px = this.player.x, py = this.player.y;
     const ptx = Math.floor(px / T), pty = Math.floor(py / T);
+    this.markExplored(ptx, pty);
 
     // enemies (only near ones think)
     this.enemies.getChildren().forEach((e) => {
@@ -836,6 +853,8 @@ export default class GameScene extends Phaser.Scene {
     if (input.kitPressed) this.placeKit();
     if (input.ladderPressed) this.placeLadder();
     if (input.waterPressed) this.fireWaterGun();
+    if (input.mapPressed) this.openMap();
+    if (input.journalPressed) this.openJournal();
 
     this.game.events.emit('hud:hint', hint);
   }
@@ -857,7 +876,9 @@ export default class GameScene extends Phaser.Scene {
         this.zoneToastAt = time;
         this.game.events.emit('hud:zone', zoneName(Math.floor(this.player.x / T), pty));
       } else if (zone === -1) {
-        this.game.events.emit('hud:zone', region === 1 ? 'Frosthaven' : 'Sundrop Flats');
+        // surface: name the district you're actually standing in (zoneName already
+        // knows all three towns, including Cinder Reach out west)
+        this.game.events.emit('hud:zone', zoneName(Math.floor(this.player.x / T), pty));
       }
     }
 
@@ -872,6 +893,81 @@ export default class GameScene extends Phaser.Scene {
     const cols = ['#0b0a12', '#171008', '#0c1410', '#0a0714'];
     this.cameras.main.setBackgroundColor(cols[zone + 1] || cols[0]);
     this.game.events.emit('hud:depth', Math.max(0, pty - SURFACE));
+  }
+
+  // ------------------------------------------------------------ map & journal
+  // Paint fog-of-war around the player. Above ground the radius is generous so
+  // the whole town strip fills in on your first walk through it.
+  markExplored(ptx, pty) {
+    const R = pty <= SURFACE ? 14 : 6;
+    const R2 = R * R;
+    for (let dy = -R; dy <= R; dy++) {
+      const y = pty + dy;
+      if (y < 0 || y >= H) continue;
+      const row = y * W;
+      for (let dx = -R; dx <= R; dx++) {
+        const x = ptx + dx;
+        if (x < 0 || x >= W) continue;
+        if (dx * dx + dy * dy <= R2) this.explored[row + x] = 1;
+      }
+    }
+  }
+
+  // Snapshot of the live tilemap plus the landmarks worth pinning. Built only
+  // when the map is opened, never per frame.
+  mapData() {
+    const tiles = new Int16Array(W * H).fill(TILE.EMPTY);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const t = this.layer.getTileAt(x, y);
+        if (t) tiles[y * W + x] = t.index;
+      }
+    }
+    const marks = [];
+    // only pin towns you can actually reach — an unopened rift keeps its secret
+    const towns = [
+      { x: SHAFT_X, name: 'Sundrop Flats', open: true },
+      { x: SHAFT_X2, name: 'Frosthaven', open: this.registry.get('rightUnlocked') },
+      { x: SHAFT_X3, name: 'Cinder Reach', open: this.registry.get('lavaUnlocked') },
+    ];
+    for (const t of towns) {
+      if (t.open) marks.push({ kind: 'town', tx: t.x, ty: SURFACE - 1, label: t.name });
+    }
+    // gate portals + placed camps (skip the three town pads, already marked)
+    for (const p of this.portals.slice(3)) {
+      marks.push({
+        kind: p.name.startsWith('Camp') ? 'camp' : 'portal',
+        tx: Math.floor(p.x / T), ty: Math.floor(p.y / T),
+      });
+    }
+    for (const cp of this.checkpoints) {
+      if (cp.activated) marks.push({ kind: 'checkpoint', tx: cp.x, ty: cp.y });
+    }
+    const stash = this.registry.get('deathStash');
+    if (stash) marks.push({ kind: 'stash', tx: Math.floor(stash.x / T), ty: Math.floor(stash.y / T) });
+
+    return {
+      tiles,
+      explored: this.explored,
+      marks,
+      player: { tx: Math.floor(this.player.x / T), ty: Math.floor(this.player.y / T) },
+      depth: Math.max(0, Math.floor(this.player.y / T) - SURFACE),
+      place: zoneName(Math.floor(this.player.x / T), Math.floor(this.player.y / T)),
+    };
+  }
+
+  openMap() {
+    if (this.uiOpen || this.gameOver) return;
+    this.uiOpen = true;
+    Sfx.select();
+    this.game.events.emit('map:open', this.mapData());
+  }
+
+  openJournal() {
+    if (this.uiOpen || this.gameOver) return;
+    this.uiOpen = true;
+    Sfx.select();
+    this.game.events.emit('journal:open', buildJournal(this.registry));
   }
 
   // -------------------------------------------------------------- digging
@@ -1477,6 +1573,7 @@ export default class GameScene extends Phaser.Scene {
     if (r.get('upgrades').lucky) total = Math.floor(total * 1.25);
     r.set('coins', r.get('coins') + total);
     r.set('bag', []);
+    r.set('soldOnce', true);
     Sfx.sell();
     this.fx.float(this.player.x, this.player.y - 22, `SOLD +${total}`, '#f2d75c');
     this.game.events.emit('hud:refresh');
@@ -1701,13 +1798,14 @@ export default class GameScene extends Phaser.Scene {
     }
     const tx = Math.floor(this.player.x / T);
     const topY = Math.floor(this.player.y / T);
+    const saved = r.get('placedLadders');
     let placed = 0;
     for (let y = topY; y > topY - 8 && y > SURFACE; y--) {
       const t = this.layer.getTileAt(tx, y);
       if (t && t.index !== TILE.EMPTY && t.index !== TILE.LADDER) break; // blocked by solid
       this.layer.putTileAt(TILE.LADDER, tx, y);
       const idx = y * W + tx;
-      if (!this.registry.get('dugTiles').includes(idx)) { /* ladders aren't dug tiles */ }
+      if (!saved.includes(idx)) saved.push(idx); // so the climb-out survives a reload
       placed++;
     }
     if (placed === 0) { Sfx.denied(); return; }
@@ -1715,6 +1813,7 @@ export default class GameScene extends Phaser.Scene {
     Sfx.buy();
     this.fx.float(this.player.x, this.player.y - 18, 'LADDER', '#a8d8b8');
     this.game.events.emit('hud:refresh');
+    this.save();
   }
 
   // ---- death loot: drop your unsold gems as a recoverable stash ----

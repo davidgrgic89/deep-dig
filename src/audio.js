@@ -210,6 +210,34 @@ class SfxEngine {
       this.tone({ from: n, dur: 0.25, type: 'triangle', vol: 0.16, delay: i * 0.16 }));
   }
 
+  // ---- bosses -----------------------------------------------------------
+  bossRoar() { // a low, rising bellow — the fight is starting
+    this.tone({ from: 70, to: 150, dur: 0.9, type: 'sawtooth', vol: 0.2 });
+    this.tone({ from: 105, to: 220, dur: 0.8, type: 'square', vol: 0.09, delay: 0.05 });
+    this.noise({ dur: 0.7, vol: 0.12, freq: 220, q: 1.4 });
+  }
+  bossHit() {
+    this.tone({ from: 320, to: 180, dur: 0.1, type: 'square', vol: 0.16 });
+    this.noise({ dur: 0.1, vol: 0.12, freq: 900, q: 1.2 });
+  }
+  bossDie() {
+    [220, 175, 147, 110, 87, 65].forEach((n, i) =>
+      this.tone({ from: n, to: n * 0.7, dur: 0.5, type: 'sawtooth', vol: 0.17, delay: i * 0.19 }));
+    this.noise({ dur: 1.6, vol: 0.16, freq: 200, q: 0.8, delay: 0.1 });
+  }
+  bossIce() { // icicles / the shell re-forming
+    this.tone({ from: 1600, to: 900, dur: 0.2, type: 'triangle', vol: 0.12 });
+    this.noise({ dur: 0.25, vol: 0.07, freq: 4200, q: 3 });
+  }
+  bossLava() { // the floor erupting
+    this.tone({ from: 90, to: 60, dur: 0.6, type: 'sawtooth', vol: 0.16 });
+    this.noise({ dur: 0.7, vol: 0.13, freq: 380, q: 1 });
+  }
+  bossFire() {
+    this.tone({ from: 400, to: 640, dur: 0.16, type: 'sawtooth', vol: 0.12 });
+    this.noise({ dur: 0.2, vol: 0.08, freq: 1400, q: 2 });
+  }
+
   // ---- music ------------------------------------------------------------
   setMood(mood) {
     if (this.mood === mood) return;
@@ -302,6 +330,19 @@ const PATTERNS = {
       294, 0, 0, 0, 0, 0, 0, 0, 247, 0, 0, 0, 0, 0, 0, 0,
       0, 0, 0, 0, 262, 0, 0, 0, 247, 0, 0, 0, 0, 0, 0, 0,
       220, 0, 0, 0, 0, 0, 233, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ],
+  },
+  boss: { // driving, fast, minor — the only pattern with a pulse on every step
+    len: 32, step: 0.115,
+    bassType: 'sawtooth', bassVol: 0.3, bassDur: 0.11,
+    leadType: 'square', leadVol: 0.13, leadDur: 0.13,
+    bass: [
+      73, 73, 0, 73, 0, 73, 73, 0, 73, 73, 0, 73, 0, 73, 0, 73,
+      69, 69, 0, 69, 0, 69, 69, 0, 78, 78, 0, 78, 0, 73, 0, 73,
+    ],
+    lead: [
+      587, 0, 698, 0, 587, 0, 466, 0, 587, 0, 784, 0, 698, 0, 587, 0,
+      554, 0, 659, 0, 554, 0, 440, 0, 622, 0, 587, 0, 466, 0, 440, 0,
     ],
   },
   abyss: { // dread drone, tritone pulses, high wisps

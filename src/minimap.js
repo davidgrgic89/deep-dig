@@ -6,10 +6,12 @@
 // `explored` bitmap and saves it, so the map fills in as you dig, the same way
 // your tunnel network does.
 import { TILE, ORES } from './art.js';
-import { SURFACE, IDOL_ROW, W, regionOfX } from './world.js';
+import { SURFACE, IDOL_ROW, W, H, regionOfX } from './world.js';
 
 export const MAP_TOP = SURFACE - 1;          // first row worth drawing (town level)
-export const MAP_BOTTOM = IDOL_ROW + 3;      // last row (floor of the finale chambers)
+// last row worth drawing: the arena floor, clamped so it can never run past the
+// grid if the finale ever moves deeper
+export const MAP_BOTTOM = Math.min(H - 1, IDOL_ROW + 2);
 export const MAP_ROWS = MAP_BOTTOM - MAP_TOP + 1;
 
 const UNSEEN = 0x0d0a14;

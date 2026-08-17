@@ -36,7 +36,47 @@ export const ZONES_L = [
   { name: 'Molten Halls', top: 96, bottom: 176, gateRow: 177 },
   { name: 'The Inferno Deep', top: 180, bottom: 248, gateRow: 249 },
 ];
-export const IDOL_ROW = 254; // finale chamber below the last gate (every region)
+// Finale row: where the treasure stands, on the arena floor. The arena itself
+// is a proper boss room now — 19 tiles wide and 6 tall, which is just under the
+// 20x11 tiles the 3x camera shows, so the whole fight stays on screen.
+export const IDOL_ROW = 258;
+export const ARENA_HALF_W = 9;                 // interior spans shaftX +/- this
+export const ARENA_CEIL = IDOL_ROW - 6;        // brick ceiling row
+export const ARENA_FLOOR = IDOL_ROW + 1;       // brick floor row
+
+// Tile bounds of a region's boss arena, for lava floods / boulder drops / clamps.
+export function arenaBounds(shaftX) {
+  return {
+    x0: shaftX - ARENA_HALF_W, x1: shaftX + ARENA_HALF_W,
+    ceil: ARENA_CEIL, floor: ARENA_FLOOR,
+    top: ARENA_CEIL + 1, bottom: IDOL_ROW,
+  };
+}
+
+// The three bosses, one per region — each keyed to that region's own tool.
+export const BOSSES = [
+  {
+    region: 0, id: 'guardian', sprite: 'boss_guardian', name: 'The Idol Guardian',
+    hp: 60, tint: 0xd8c070,
+    intro: ['The mask grinds open. Stone limbs unfold from the wall.',
+      'IT WILL NOT LET YOU TAKE THE IDOL.'],
+    tip: 'It hurls boulders — the BOULDER DRILL smashes them mid-air.',
+  },
+  {
+    region: 1, id: 'warden', sprite: 'boss_warden', name: 'The Frozen Warden',
+    hp: 75, tint: 0xbfe9ff,
+    intro: ['Ice cracks. A knight of frost rises before the Throne.',
+      'ITS SHELL WILL BLUNT YOUR PICK.'],
+    tip: 'Break the ice shell fast — the FIRE PICK bites through it twice as deep.',
+  },
+  {
+    region: 2, id: 'core', sprite: 'boss_core', name: "The Volcano's Heart",
+    hp: 90, tint: 0xff7a3a,
+    intro: ['The obsidian shell splits. Something molten beats inside.',
+      'THE FLOOR BEGINS TO RUN WITH FIRE.'],
+    tip: 'The WATER GUN scalds it — and cools the lava it floods the floor with.',
+  },
+];
 
 // Golden relics — hidden collectibles (4 per region) sealed in little vaults with
 // a single dug-in entrance. Found ones are shown off in the surface museum.
@@ -469,13 +509,24 @@ export function generateWorld(seedNum = 7) {
     }
   }
 
+  // The boss arena. Brick floor and ceiling, bedrock side walls (everything
+  // below zone 3 is bedrock already), and a 3-wide hole punched through the
+  // ceiling right under the last gate so you drop straight in.
   function buildGoalChamber(sx) {
-    for (let y = IDOL_ROW - 3; y <= IDOL_ROW + 1; y++) {
-      for (let x = sx - 6; x <= sx + 6; x++) set(x, y, y === IDOL_ROW + 1 ? TILE.BRICK : TILE.EMPTY);
+    const a = arenaBounds(sx);
+    for (let x = a.x0; x <= a.x1; x++) {
+      set(x, a.ceil, TILE.BRICK);
+      set(x, a.floor, TILE.BRICK);
     }
-    for (let x = sx - 6; x <= sx + 6; x++) set(x, IDOL_ROW - 4, TILE.BRICK);
-    set(sx - 7, IDOL_ROW - 3, TILE.BRICK); set(sx + 7, IDOL_ROW - 3, TILE.BRICK);
-    for (let y = ZONES[2].gateRow + 3; y < IDOL_ROW - 3; y++) {
+    for (let y = a.top; y <= a.bottom; y++) {
+      for (let x = a.x0; x <= a.x1; x++) set(x, y, TILE.EMPTY);
+    }
+    // mossy trim just outside the corners, so it reads as a built chamber
+    for (const y of [a.ceil, a.floor]) {
+      set(a.x0 - 1, y, TILE.BRICK2); set(a.x1 + 1, y, TILE.BRICK2);
+    }
+    // the entry hole — starts BELOW the gate rows so the seal survives
+    for (let y = ZONES[2].gateRow + 3; y <= a.ceil; y++) {
       for (const x of [sx - 1, sx, sx + 1]) set(x, y, TILE.EMPTY);
     }
   }
@@ -512,7 +563,7 @@ export function zoneName(x, y) {
 // background wall tile for a tile (drawn behind dug-out areas)
 export function bgTileAt(x, y) {
   if (y < SURFACE) return TILE.EMPTY;
-  if (y >= IDOL_ROW - 4) return TILE.BG_BRICK;
+  if (y >= ARENA_CEIL) return TILE.BG_BRICK;   // the whole boss arena is brickwork
   const region = regionOfX(x);
   if (region === 1) return TILE.BG_FROST;
   if (region === 2) return TILE.BG_MAGMA;

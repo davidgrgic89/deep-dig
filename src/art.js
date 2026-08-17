@@ -904,6 +904,116 @@ const RELIC_MASK = [
 ];
 
 // ---------------------------------------------------------------------------
+// BOSSES — one per region, 28x24, single frame (they're animated with tweens
+// rather than flipbooks so the ASCII stays readable).
+
+// The Idol Guardian — a stone colossus with a golden mask, guarding the Idol.
+const BOSS_GUARDIAN = [
+  '.........dddddddddd.........',
+  '........dUUUUUUUUUUd........',
+  '.......dUUUUUUUUUUUUd.......',
+  '.......dUUyyyyyyyyUUd.......',
+  '.......dUUyYYyyYYyUUd.......',
+  '.......dUUyEYyyYEyUUd.......',
+  '.......dUUyyyyyyyyUUd.......',
+  '.......dUUUyYYYYyUUUd.......',
+  '........dUUUUUUUUUUd........',
+  '.....ddddUUUUUUUUUUdddd.....',
+  '...dUUUUUUUUUUUUUUUUUUUUd...',
+  '..dUUUUUUUUyyyyyyUUUUUUUUd..',
+  '..dUUUUUUUUyYYYYyUUUUUUUUd..',
+  '..dUUUUUUUUyyyyyyUUUUUUUUd..',
+  '..dUUdUUUUUUUUUUUUUUUUdUUd..',
+  '..dUUdUUUUUUUUUUUUUUUUdUUd..',
+  '..dUUdUUUUUUUUUUUUUUUUdUUd..',
+  '..dUUd..dUUUUUUUUUUd..dUUd..',
+  '..dUUd..dUUUUUUUUUUd..dUUd..',
+  '..dddd..dUUUUUUUUUUd..dddd..',
+  '........dUUUd..dUUUd........',
+  '........dUUUd..dUUUd........',
+  '.......dUUUUUd..dUUUUUd.....',
+  '.......dddddd...dddddd......',
+];
+
+// The Frozen Warden — an ice knight. Grows a shell of ice armour that the
+// pickaxe can only chip.
+const BOSS_WARDEN = [
+  '..........ZZZZZZZZ..........',
+  '........ZZvvvvvvvvZZ........',
+  '.......ZvvvvvvvvvvvvZ.......',
+  '......ZvvviiiiiiiivvvZ......',
+  '......Zvvi........ivvZ......',
+  '......Zvvi.EE..EE.ivvZ......',
+  '......Zvvi.EE..EE.ivvZ......',
+  '......Zvvii......iivvZ......',
+  '.......ZvvviiiiiivvvZ.......',
+  '........ZvvvvvvvvvvZ........',
+  '.....ZZZZvvvvvvvvvvZZZZ.....',
+  '...ZvvvvvvvvvzzzzvvvvvvvvZ..',
+  '..ZvvvvvvvvvziiizvvvvvvvvvZ.',
+  '..ZvvvvvvvvvzzzzvvvvvvvvvvZ.',
+  '..ZvvZvvvvvvvvvvvvvvvvZvvvZ.',
+  '..ZvvZvvvvvvvvvvvvvvvvZvvvZ.',
+  '..ZvvZvvvvvvvvvvvvvvvvZvvZ..',
+  '..ZvvZ..ZvvvvvvvvvvZ..ZvvZ..',
+  '..ZvvZ..ZvvvvvvvvvvZ..ZvvZ..',
+  '..ZZZZ..ZvvvvvvvvvvZ..ZZZZ..',
+  '........ZvvvZ..ZvvvZ........',
+  '........ZvvvZ..ZvvvZ........',
+  '.......ZvvvvvZ..ZvvvvvZ.....',
+  '.......ZZZZZZ...ZZZZZZ......',
+];
+
+// The Volcano's Heart — an obsidian shell around a molten core. Floods the
+// arena with lava; water is what really hurts it.
+const BOSS_CORE = [
+  '..........DDDDDDDD..........',
+  '........DDAAAAAAAADD........',
+  '.......DAAAAAAAAAAAAD.......',
+  '......DAAAArrrrrrAAAAD......',
+  '......DAAArroooooorrAAD.....',
+  '......DAArroocccoorrAAD.....',
+  '......DAArrocffficorrAD.....',
+  '......DAArroocccoorrAAD.....',
+  '.......DAAArroooorrAAD......',
+  '........DAAArrrrAAADD.......',
+  '.....DDDDAAAAAAAAAADDDD.....',
+  '...DAAAAAAAAAoooooAAAAAAAD..',
+  '..DAAAAAAAAAocfffcoAAAAAAAD.',
+  '..DAAAAAAAAAAoooooAAAAAAAAD.',
+  '..DAADAAAAAAAAAAAAAAAADAAAD.',
+  '..DAADAAAAArrrrrrAAAAADAAAD.',
+  '..DAADAAAAAAAAAAAAAAAADAAD..',
+  '..DAAD..DAAAAAAAAAAD..DAAD..',
+  '..DAAD..DAAArrrrAAAD..DAAD..',
+  '..DDDD..DAAAAAAAAAAD..DDDD..',
+  '........DAAAD..DAAAD........',
+  '........DAAAD..DAAAD........',
+  '.......DAAAAAD..DAAAAAD.....',
+  '.......DDDDDD...DDDDDD......',
+];
+
+// boss projectiles
+const ICICLE = [
+  '.vv.',
+  'vivv',
+  'vivv',
+  'vvvv',
+  '.vv.',
+  '.vv.',
+  '..v.',
+  '..v.',
+];
+const FIREBALL = [
+  '..oo..',
+  '.occo.',
+  'ocffco',
+  'ocffco',
+  '.occo.',
+  '..oo..',
+];
+
+// ---------------------------------------------------------------------------
 export function makeSprites(scene) {
   const playerFrames = [
     playerFrame('idle'), playerFrame('walk1'), playerFrame('idle'),
@@ -937,6 +1047,12 @@ export function makeSprites(scene) {
   single(scene, 'water', WATER);
   single(scene, 'key', KEY);
   single(scene, 'suit', SUIT);
+  // bosses + their projectiles
+  single(scene, 'boss_guardian', BOSS_GUARDIAN);
+  single(scene, 'boss_warden', BOSS_WARDEN);
+  single(scene, 'boss_core', BOSS_CORE);
+  single(scene, 'icicle', ICICLE);
+  single(scene, 'fireball', FIREBALL);
   // golden relics (museum collectibles)
   single(scene, 'relic_scarab', RELIC_SCARAB);
   single(scene, 'relic_medallion', RELIC_MEDALLION);

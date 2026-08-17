@@ -48,6 +48,20 @@ export default class UIScene extends Phaser.Scene {
     // vignette that deepens with depth
     this.vignette = this.add.graphics().setDepth(5);
 
+    // ---- boss bar (hidden until a boss wakes) ---------------------------
+    this.bossBar = this.add.container(0, 0).setDepth(14).setVisible(false);
+    const bw = 420;
+    this.bossName = this.add.text(SW / 2, SH - 122, '', TXT(10, '#f2e6c9')).setOrigin(0.5);
+    this.bossTrack = this.add.rectangle(SW / 2, SH - 104, bw, 12, 0x14100a)
+      .setStrokeStyle(2, 0x8a5e2e);
+    this.bossFill = this.add.rectangle(SW / 2 - bw / 2 + 3, SH - 104, bw - 6, 7, 0xc94f38)
+      .setOrigin(0, 0.5);
+    // the frost warden's ice shell rides just under its health
+    this.bossShell = this.add.rectangle(SW / 2 - bw / 2 + 3, SH - 94, bw - 6, 4, 0x9fe0f8)
+      .setOrigin(0, 0.5);
+    this.bossBar.add([this.bossName, this.bossTrack, this.bossFill, this.bossShell]);
+    this.bossBarW = bw - 6;
+
     // controls hint (fades out)
     this.controls = this.add.text(SW / 2, SH - 30,
       'MOVE ←→  JUMP SPACE  DIG X (+↑/↓)  TALK/USE E  MAP TAB  QUESTS Q  RECALL hold R  MUTE M',
@@ -72,6 +86,8 @@ export default class UIScene extends Phaser.Scene {
     on('museum:open', (data) => this.showMuseum(data));
     on('map:open', (data) => this.showMap(data));
     on('journal:open', (data) => this.showJournal(data));
+    on('boss:hp', (s) => this.showBossBar(s));
+    on('boss:hide', () => this.hideBossBar());
     on('hud:death', () => this.deathFlash());
     on('game:won', (stats) => this.showWin(stats));
 
@@ -365,6 +381,24 @@ export default class UIScene extends Phaser.Scene {
     }
   }
 
+  showBossBar({ name, hp, maxHp, shell, maxShell, tint }) {
+    this.bossBar.setVisible(true);
+    this.bossName.setText(name);
+    this.bossFill.setFillStyle(tint || 0xc94f38);
+    // tween the drain so a big hit reads as a big hit
+    this.tweens.add({
+      targets: this.bossFill, displayWidth: Math.max(0, this.bossBarW * (hp / maxHp)),
+      duration: 180, ease: 'Quad.Out',
+    });
+    const hasShell = shell > 0;
+    this.bossShell.setVisible(hasShell);
+    if (hasShell) this.bossShell.displayWidth = this.bossBarW * (shell / maxShell);
+  }
+
+  hideBossBar() {
+    this.bossBar.setVisible(false);
+  }
+
   zoneToast(name) {
     this.zoneText.setText(name).setAlpha(0);
     this.tweens.add({
@@ -551,7 +585,7 @@ export default class UIScene extends Phaser.Scene {
     const mapW = img.width * S, mapH = MAP_ROWS * S;
     // town name labels sit in the strip above the map, so the map starts low
     // enough to leave them room
-    const top = 22;
+    const top = 20;
     img.setY(top);
     const left = SW / 2 - mapW / 2;
 
@@ -616,7 +650,7 @@ export default class UIScene extends Phaser.Scene {
       ly += 14;
     }
 
-    const foot = this.add.text(SW / 2, SH - 8, 'TAB / ESC — close      Q — quest journal',
+    const foot = this.add.text(SW / 2, SH - 5, 'TAB / ESC — close      Q — quest journal',
       TXT(8, '#b8b09a')).setOrigin(0.5, 1);
     this.panel.add(foot);
   }

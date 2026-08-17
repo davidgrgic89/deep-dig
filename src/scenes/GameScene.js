@@ -3,10 +3,12 @@ import Sfx from '../audio.js';
 import Player from '../player.js';
 import { Enemy, makeEnemyAnims } from '../enemies.js';
 import { Boulder } from '../boulder.js';
+import { Boss } from '../boss.js';
 import { TILE, TILE_INFO, ORES } from '../art.js';
 import {
   T, W, H, SURFACE, SHAFT_X, SHAFT_X2, SHAFT_X3, DIVIDER, DIVIDER2,
-  ZONES, ZONES_R, ZONES_L, IDOL_ROW, ARTIFACTS,
+  ZONES, ZONES_R, ZONES_L, IDOL_ROW, ARTIFACTS, BOSSES, arenaBounds,
+  ARENA_CEIL, ARENA_HALF_W,
   generateWorld, zoneOfRow, regionOfX, zoneName, bgTileAt,
 } from '../world.js';
 import { packExplored, unpackExplored } from '../minimap.js';
@@ -133,6 +135,8 @@ export default class GameScene extends Phaser.Scene {
     this.waterJets = this.physics.add.group({ allowGravity: false });
     this.physics.add.collider(this.waterJets, this.layer, (jet, tile) => this.waterHitsTile(jet, tile));
 
+    this.wireBosses();
+
     // camera
     this.cameras.main.setBounds(0, 0, W * T, H * T);
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
@@ -180,6 +184,8 @@ export default class GameScene extends Phaser.Scene {
     d('activatedCheckpoints', []); // indices of lit checkpoint temples
     d('foundArtifacts', []);    // ids of golden relics collected for the museum
     d('soldOnce', false);       // has the player ever sold a bag? (journal)
+    d('bossesKilled', []);      // boss ids beaten — a dead boss stays dead
+    d('bossIntros', []);        // boss ids whose intro cutscene has played
     // map fog-of-war: one byte per tile, saved packed to bits
     this.explored = unpackExplored(save?.explored, W * H);
     const townSpawn = { x: (SHAFT_X - 8) * T, y: (SURFACE - 1) * T };
@@ -196,7 +202,8 @@ export default class GameScene extends Phaser.Scene {
       'takenChests', 'carriedStones', 'placedPortals', 'dugTiles', 'placedLadders',
       'activatedCheckpoints', 'respawnPoint', 'ropeLadders', 'rightUnlocked',
       'idolClaimed', 'deathStash', 'lavaUnlocked', 'crownClaimed', 'heartClaimed',
-      'dungeonKeys', 'skin', 'foundArtifacts', 'soldOnce']) data[k] = r.get(k);
+      'dungeonKeys', 'skin', 'foundArtifacts', 'soldOnce', 'bossesKilled',
+      'bossIntros']) data[k] = r.get(k);
     if (this.explored) data.explored = packExplored(this.explored);
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch { /* storage full/blocked */ }
   }
@@ -520,6 +527,32 @@ export default class GameScene extends Phaser.Scene {
       this.artifactSprites.push({ id: a.id, px, py, spr });
     }
 
+    // Arena braziers. These are ATMOSPHERE only — the room is made readable by
+    // dropping the darkness (see updateLighting), because these glows blend
+    // additively above the dark layer and will wash a sprite to white if they
+    // sit on top of one. Hence: dim, and out at the corners away from the boss.
+    for (const meta of BOSSES) {
+      const a = arenaBounds([SHAFT_X, SHAFT_X2, SHAFT_X3][meta.region]);
+      for (const gx of [a.x0 + 1, a.x1 - 1]) {
+        const glow = this.portalGlow(gx * T + 8, a.bottom * T + 6, 0xffa040);
+        glow.setAlpha(0.18).setScale(0.12);
+        this.tweens.killTweensOf(glow);
+        this.tweens.add({ targets: glow, alpha: 0.3, duration: 1300, yoyo: true, repeat: -1 });
+      }
+    }
+
+    // the three region bosses, each waiting in its finale arena
+    this.bosses = this.add.group();
+    this.bossByRegion = {};
+    const killed = this.registry.get('bossesKilled') || [];
+    for (const meta of BOSSES) {
+      if (killed.includes(meta.id)) continue;
+      const shaftX = [SHAFT_X, SHAFT_X2, SHAFT_X3][meta.region];
+      const b = new Boss(this, meta, shaftX);
+      this.bosses.add(b);
+      this.bossByRegion[meta.region] = b;
+    }
+
     // a loot stash left from a previous death
     this.stashSprite = null;
     const stash = this.registry.get('deathStash');
@@ -576,6 +609,11 @@ export default class GameScene extends Phaser.Scene {
     if (zone === 1) target = Math.max(target, 0.93);
     if (zone === 2) target = Math.max(target, 0.985);
     if (pty <= 0) target = 0;
+    // Boss arenas are torch-lit. Without this the abyss darkness (0.985) would
+    // hide the boss completely and the fight would be unreadable. Kept low
+    // enough that the boss keeps its own colours instead of reading as a
+    // silhouette lit by the braziers.
+    if (this.inBossArena()) target = Math.min(target, 0.15);
     // ease toward the target so entering/leaving the mine feels gradual
     this.darkAlpha += (target - this.darkAlpha) * 0.06;
     this.darkness.setAlpha(this.darkAlpha < 0.02 ? 0 : this.darkAlpha);
@@ -689,6 +727,16 @@ export default class GameScene extends Phaser.Scene {
     // boulders (only nearby ones need support/fall checks)
     this.boulders.getChildren().forEach((bd) => {
       if (bd.active && Math.abs(bd.x - px) < 460 && Math.abs(bd.y - py) < 360) bd.update(time);
+    });
+
+    // bosses: only the one whose arena you're in ever thinks
+    this.bosses.getChildren().forEach((b) => {
+      if (b.active && Math.abs(b.x - px) < 460 && Math.abs(b.y - py) < 300) {
+        b.update(time, dtMs, this.player);
+      } else if (b.awake && !b.dying) {
+        b.reset();                       // walked out mid-fight: it heals up
+        this.game.events.emit('boss:hide');
+      }
     });
 
     // spikes at feet
@@ -835,11 +883,19 @@ export default class GameScene extends Phaser.Scene {
     if (this.stashSprite && this.stashSprite.active && near(this.stashSprite.x, this.stashSprite.y - 4, 20)) {
       this.recoverStash();
     }
-    // finales: Idol opens the east Rift, Crown opens the west Ember Rift,
-    // the Heart of the Volcano is the true ending.
-    if (this.idol.visible && !this.claiming && near(this.idol.x, this.idol.y - 12, 22)) this.claimIdol();
-    if (this.crown.visible && !this.claiming && near(this.crown.x, this.crown.y - 12, 22)) this.claimCrown();
-    if (!this.won && !this.claiming && near(this.heart.x, this.heart.y - 12, 22)) this.winGame();
+    // finales: each treasure is guarded — you have to put the boss down first.
+    // Idol opens the east Rift, Crown opens the west Ember Rift, the Heart of
+    // the Volcano is the true ending.
+    const guardedBy = (region) => `${BOSSES[region].name} bars the way — put it down first`;
+    if (this.idol.visible && !this.claiming && near(this.idol.x, this.idol.y - 12, 22)) {
+      if (this.bossAlive(0)) hint = guardedBy(0); else this.claimIdol();
+    }
+    if (this.crown.visible && !this.claiming && near(this.crown.x, this.crown.y - 12, 22)) {
+      if (this.bossAlive(1)) hint = guardedBy(1); else this.claimCrown();
+    }
+    if (!this.won && !this.claiming && near(this.heart.x, this.heart.y - 12, 22)) {
+      if (this.bossAlive(2)) hint = guardedBy(2); else this.winGame();
+    }
 
     // rift hints
     if (!this.registry.get('rightUnlocked') && Phaser.Math.Distance.Between(px, py, DIVIDER * T, SURFACE * T) < 40) {
@@ -865,8 +921,10 @@ export default class GameScene extends Phaser.Scene {
     const region = regionOfX(Math.floor(this.player.x / T));
     const r = this.registry;
 
-    // music + zone toast
-    const mood = zone === -1 ? 'town' : zone === 0 ? 'mines' : zone === 1 ? 'caverns' : 'abyss';
+    // music + zone toast — a live boss overrides the depth mood entirely
+    const fighting = this.bosses.getChildren().some((b) => b.active && b.awake && !b.dying);
+    const mood = fighting ? 'boss'
+      : zone === -1 ? 'town' : zone === 0 ? 'mines' : zone === 1 ? 'caverns' : 'abyss';
     Sfx.setMood(mood);
     const zoneKey = `${region}:${zone}`;
     if (zoneKey !== this.curZoneKey) {
@@ -970,6 +1028,163 @@ export default class GameScene extends Phaser.Scene {
     this.game.events.emit('journal:open', buildJournal(this.registry));
   }
 
+  // ------------------------------------------------------------------ bosses
+  wireBosses() {
+    // ceiling rocks the guardian drops — heavy, smashable with the drill
+    this.arenaRocks = this.physics.add.group();
+    this.physics.add.collider(this.arenaRocks, this.layer, (rock) => this.shatterRock(rock, true));
+    this.physics.add.overlap(this.player, this.arenaRocks, (pl, rock) => {
+      if (rock.body.velocity.y > 60) { this.damagePlayer(rock.x, 1); this.shatterRock(rock, false); }
+    });
+
+    // icicles and fireballs — one group, each shot carries its own damage
+    this.bossShots = this.physics.add.group();
+    this.physics.add.collider(this.bossShots, this.layer, (shot) => this.popShot(shot));
+    this.physics.add.overlap(this.player, this.bossShots, (pl, shot) => {
+      this.damagePlayer(shot.x, shot.dmg || 1);
+      this.popShot(shot);
+    });
+
+    // walking into a boss hurts
+    this.physics.add.overlap(this.player, this.bosses, (pl, b) => {
+      if (b.awake && !b.dying) this.damagePlayer(b.x, b.contactDmg);
+    });
+    // the water gun is the molten core's real weakness
+    this.physics.add.overlap(this.waterJets, this.bosses, (jet, b) => {
+      if (b.awake && !b.dying) b.hit(this.registry.get('pickTier'), this.time.now, 'water');
+      this.killJet(jet);
+    });
+  }
+
+  // Is the player standing in one of the three finale arenas?
+  inBossArena() {
+    const ty = Math.floor(this.player.y / T);
+    if (ty < ARENA_CEIL) return false;
+    const tx = Math.floor(this.player.x / T);
+    return [SHAFT_X, SHAFT_X2, SHAFT_X3].some((sx) => Math.abs(tx - sx) <= ARENA_HALF_W + 1);
+  }
+
+  bossAlive(region) {
+    const b = this.bossByRegion?.[region];
+    return !!b && b.active && !b.dying;
+  }
+
+  onBossWake(boss) {
+    const seen = this.registry.get('bossIntros') || [];
+    this.game.events.emit('boss:hp', boss.hudState());
+    if (seen.includes(boss.kind)) {
+      this.game.events.emit('hud:zone', boss.meta.name);
+      return;
+    }
+    seen.push(boss.kind);
+    this.registry.set('bossIntros', seen);
+    this.uiOpen = true;
+    this.game.events.emit('dialog:show', {
+      name: boss.meta.name,
+      lines: [...boss.meta.intro, boss.meta.tip],
+    });
+    this.save();
+  }
+
+  onBossDied(boss) {
+    const killed = this.registry.get('bossesKilled');
+    if (!killed.includes(boss.kind)) killed.push(boss.kind);
+    delete this.bossByRegion[boss.meta.region];
+    this.game.events.emit('boss:hide');
+    // it pays out: a pile of coins and a few Relic Orbs
+    this.time.delayedCall(700, () => {
+      for (let i = 0; i < 8; i++) {
+        const p = this.pickups.create(boss.x + Phaser.Math.Between(-16, 16), boss.y, 'coin');
+        p.ore = 'coin'; p.coinValue = Phaser.Math.Between(25, 60);
+        p.setDepth(12); p.setVelocity(Phaser.Math.Between(-60, 60), -160); p.setBounce(0.4);
+      }
+      for (let i = 0; i < 3; i++) this.spawnOre(boss.x + i * 6 - 6, boss.y - 4, 'orb');
+      this.fx.float(boss.x, boss.y - 30, 'THE WAY IS CLEAR', '#f2d75c');
+    });
+    // clear anything the fight left lying around
+    this.arenaRocks.getChildren().slice().forEach((r) => this.shatterRock(r, false));
+    this.bossShots.getChildren().slice().forEach((s) => this.popShot(s));
+    this.save();
+  }
+
+  resetBosses() {
+    this.bosses?.getChildren().forEach((b) => { if (b.awake) b.reset(); });
+    this.arenaRocks?.getChildren().slice().forEach((r) => this.shatterRock(r, false));
+    this.bossShots?.getChildren().slice().forEach((s) => this.popShot(s));
+    this.game.events.emit('boss:hide');
+  }
+
+  // ---- boss attacks (called from boss.js) --------------------------------
+  // A rock from the ceiling, with a red smear on the floor as the tell.
+  dropArenaBoulder(tx, arena) {
+    const x = tx * T + 8;
+    const warn = this.add.rectangle(x, arena.floor * T - 1, 14, 3, 0xff5a3a, 0.85)
+      .setOrigin(0.5, 1).setDepth(6);
+    this.tweens.add({
+      targets: warn, alpha: 0.15, duration: 190, yoyo: true, repeat: 1,
+      onComplete: () => warn.destroy(),
+    });
+    this.time.delayedCall(430, () => {
+      if (!this.arenaRocks) return;
+      const rock = this.arenaRocks.create(x, arena.top * T + 6, 'boulder');
+      rock.setDepth(9);
+      rock.body.setSize(14, 14).setOffset(1, 1);
+      rock.body.setAllowGravity(true);
+      rock.setVelocityY(70);
+      rock.hp = 3;
+    });
+  }
+
+  shatterRock(rock, landed) {
+    if (!rock || !rock.active) return;
+    if (landed) { Sfx.thud(); this.cameras.main.shake(90, 0.004); }
+    this.fx.burst(rock.x, rock.y, 0x8a94a2, 9);
+    this.fx.dust(rock.x, rock.y + 6, 4);
+    rock.destroy();
+  }
+
+  dropIcicle(tx, arena) {
+    if (!this.bossShots) return;
+    const shot = this.bossShots.create(tx * T + 8, arena.top * T + 6, 'icicle');
+    shot.setDepth(9);
+    shot.body.setSize(4, 8);
+    shot.body.setAllowGravity(true);
+    shot.setVelocityY(120);
+    shot.dmg = 1;
+  }
+
+  throwFireball(boss, player) {
+    if (!this.bossShots) return;
+    const shot = this.bossShots.create(boss.x, boss.y - 6, 'fireball');
+    shot.setDepth(9);
+    shot.body.setSize(6, 6);
+    shot.body.setAllowGravity(false);
+    const a = Phaser.Math.Angle.Between(boss.x, boss.y, player.x, player.y);
+    shot.setVelocity(Math.cos(a) * 210, Math.sin(a) * 210);
+    shot.dmg = 1;
+    this.tweens.add({ targets: shot, angle: 360, duration: 500, repeat: -1 });
+    this.time.delayedCall(4000, () => this.popShot(shot));
+  }
+
+  popShot(shot) {
+    if (!shot || !shot.active) return;
+    this.fx.burst(shot.x, shot.y, shot.texture.key === 'icicle' ? 0xbfe9ff : 0xff8c2a, 6);
+    shot.destroy();
+  }
+
+  // Lava wells up through the arena floor. The existing LAVA hazard + water gun
+  // cooling both work on these tiles for free.
+  floodArenaFloor(arena, count) {
+    const y = arena.bottom;
+    for (let i = 0; i < count * 3 && count > 0; i++) {
+      const x = Phaser.Math.Between(arena.x0 + 1, arena.x1 - 1);
+      if (this.layer.getTileAt(x, y)) continue;   // already lava or something else
+      this.layer.putTileAt(TILE.LAVA, x, y);      // placed tiles don't collide — correct for lava
+      this.fx.burst(x * T + 8, y * T + 8, 0xff6a20, 6);
+      count--;
+    }
+  }
+
   // -------------------------------------------------------------- digging
   isSolidAt(x, y) {
     const t = this.layer.getTileAtWorldXY(x, y);
@@ -995,6 +1210,32 @@ export default class GameScene extends Phaser.Scene {
     // hit enemies first (a swing is also a weapon)
     const reach = 16;
     const hx = player.x + dx * reach, hy = player.y + dy * reach + 2;
+
+    // a boss is the biggest target in the room, so it takes the swing first
+    let hitBoss = false;
+    this.bosses.getChildren().forEach((b) => {
+      if (!b.active || !b.awake || b.dying || hitBoss) return;
+      if (Phaser.Math.Distance.Between(b.x, b.y, hx, hy) < 24 ||
+          Phaser.Math.Distance.Between(b.x, b.y, player.x, player.y) < 26) {
+        b.hit(this.registry.get('pickTier'), this.time.now, 'pick');
+        hitBoss = true;
+      }
+    });
+    if (hitBoss) return;
+
+    // ceiling rocks in a boss arena: only the drill breaks them, same as boulders
+    let hitRock = false;
+    (this.arenaRocks?.getChildren() || []).forEach((rk) => {
+      if (!rk.active || hitRock) return;
+      if (Phaser.Math.Distance.Between(rk.x, rk.y, hx, hy) < 16 ||
+          Phaser.Math.Distance.Between(rk.x, rk.y, player.x, player.y) < 16) {
+        if (this.registry.get('upgrades').drill) this.shatterRock(rk, false);
+        else { Sfx.clank(); this.fx.burst(rk.x, rk.y, 0x8a94a2, 3); }
+        hitRock = true;
+      }
+    });
+    if (hitRock) return;
+
     let hitEnemy = false;
     this.enemies.getChildren().forEach((e) => {
       if (!e.active || hitEnemy) return;
@@ -1245,6 +1486,7 @@ export default class GameScene extends Phaser.Scene {
     this.player.setVelocity(0, -200);
     this.player.body.checkCollision.none = true;
     Sfx.die();
+    this.resetBosses(); // a boss you nearly beat goes back to full — no chip-away wins
     this.tweens.add({ targets: this.player, angle: 180, alpha: 0, duration: 900 });
     this.dropStash(); // your carried gems stay where you fell — go get them back
     this.game.events.emit('hud:death');
@@ -1461,6 +1703,13 @@ export default class GameScene extends Phaser.Scene {
       }
       this.enemies.getChildren().forEach((e) => {
         if (e.active && Phaser.Math.Distance.Between(e.x, e.y, dx, dy) < 40) e.hit(dx, 4, this.time.now);
+      });
+      // dynamite is a fine answer to a boss (and to its ice shell)
+      this.bosses.getChildren().forEach((b) => {
+        if (b.active && b.awake && !b.dying &&
+            Phaser.Math.Distance.Between(b.x, b.y, dx, dy) < 46) {
+          b.hit(6, this.time.now, 'pick');
+        }
       });
       if (Phaser.Math.Distance.Between(this.player.x, this.player.y, dx, dy) < 30) {
         this.damagePlayer(dx, 1);

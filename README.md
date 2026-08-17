@@ -32,15 +32,17 @@ Three regions sit side by side on one map, separated by bedrock spines with
 sealed **rifts** between them. Each region is a full three-zone descent ending
 in its own treasure, and each has its own town, trader and signature tool.
 
-| Region | Town | Zones | Ends in |
-| --- | --- | --- | --- |
-| Desert (start) | Sundrop Flats | Dusty Mines · Emerald Caverns · Forgotten Abyss | The Golden Idol |
-| Frost (east) | Frosthaven | Frostbite Hollow · Glacier Deep · The Frozen Throne | The Sun Crown |
-| Molten (west, widest) | Cinder Reach | Cinder Steppes · Molten Halls · The Inferno Deep | The Heart of the Volcano |
+| Region | Town | Zones | Boss | Ends in |
+| --- | --- | --- | --- | --- |
+| Desert (start) | Sundrop Flats | Dusty Mines · Emerald Caverns · Forgotten Abyss | The Idol Guardian | The Golden Idol |
+| Frost (east) | Frosthaven | Frostbite Hollow · Glacier Deep · The Frozen Throne | The Frozen Warden | The Sun Crown |
+| Molten (west, widest) | Cinder Reach | Cinder Steppes · Molten Halls · The Inferno Deep | The Volcano's Heart | The Heart of the Volcano |
 
 - Claiming the **Golden Idol** opens the Rift east to the frost; claiming the
   **Sun Crown** opens the Ember Rift west to the lava. The **Heart of the
   Volcano** is the true ending.
+- Each treasure is **guarded by a boss** at 246 m, in a torch-lit arena below
+  the last gate. You cannot take the treasure until the boss is down.
 - Every zone is sealed by an **ancient gate**; each needs a **Portal Stone**
   hidden in a brick cave in the zone above. Open gates become portals — a fast
   travel network back to town.
@@ -62,6 +64,24 @@ in its own treasure, and each has its own town, trader and signature tool.
   town chiptune to sparse minor grooves to a near-atonal abyss drone.
 - Death drops your unsold gems where you fell — go back and get them. Progress
   (upgrades, dug tunnels, opened gates, explored map) saves to localStorage.
+
+## The bosses
+
+Each boss is built around its own region's signature tool — the thing you bought
+to get down there is the thing that wins the fight. None of them *require* it
+though: a bare pickaxe and good dodging always works, it's just slower, so a
+finale can never soft-lock you.
+
+| Boss | HP | Attacks | What it's weak to |
+| --- | --- | --- | --- |
+| The Idol Guardian | 60 | Drops boulders from the ceiling (red smear on the floor is the tell); charges across the arena | The **Boulder Drill** — your pickaxe smashes the falling rocks instead of bouncing off |
+| The Frozen Warden | 75 | Icicle volleys from the ceiling; charges. Regrows a 6-point **ice shell** every 9 s that soaks hits entirely | The **Fire Pick** chews 2 shell per swing instead of 1 — dynamite works too |
+| The Volcano's Heart | 90 | Floods the arena floor with lava; lobs fireballs | The **Water Gun** — 18 damage a jet vs 2 for a pickaxe, and it cools the lava back to solid rock |
+
+Every attack is telegraphed: the boss plants itself, flushes red and shivers
+before anything lands. Below 40 % health each one enrages — faster cadence, more
+projectiles. Die, or leave the arena, and the boss heals to full, so there's no
+chipping one down across a dozen runs.
 
 ## Run it
 
@@ -124,6 +144,7 @@ turn boost, squash & stretch. All constants live in the `P` block at the top of
 - [src/player.js](src/player.js) — movement physics, digging, ladder, dash
 - [src/enemies.js](src/enemies.js) — grub, beetle, crawler, bat, spitter, wraith
 - [src/boulder.js](src/boulder.js) — falling boulders
+- [src/boss.js](src/boss.js) — the three region bosses and their attack patterns
 - [src/journal.js](src/journal.js) — quest journal, derived entirely from saved state
 - [src/minimap.js](src/minimap.js) — world map texture painter + fog-of-war packing
 - [src/audio.js](src/audio.js) — synthesized SFX + four depth-based music moods

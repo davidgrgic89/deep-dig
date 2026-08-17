@@ -2,7 +2,7 @@
 // separate quest progress to keep in sync, so a journal entry can never drift
 // out of step with the world. `buildJournal(registry)` is pure and cheap enough
 // to call on every HUD refresh.
-import { ARTIFACTS } from './world.js';
+import { ARTIFACTS, IDOL_ROW, SURFACE } from './world.js';
 
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI'];
 
@@ -14,6 +14,8 @@ export function buildJournal(r) {
   const pick = r.get('pickTier') || 1;
   const suited = r.get('skin') === 'player_fire';
   const gatesIn = (reg) => gates.filter((k) => k.startsWith(`r${reg}z`)).length;
+  const beaten = r.get('bossesKilled') || [];
+  const FINALE_DEPTH = IDOL_ROW - SURFACE;   // 246m — keep in step with the world
 
   const chapters = [
     {
@@ -42,7 +44,12 @@ export function buildJournal(r) {
           done: gatesIn(0) >= 3,
         },
         {
-          text: 'Claim the Golden Idol at 242m',
+          text: `Defeat the Idol Guardian at ${FINALE_DEPTH}m`,
+          detail: 'It hurls boulders from the ceiling — the Boulder Drill smashes them',
+          done: beaten.includes('guardian'),
+        },
+        {
+          text: 'Claim the Golden Idol',
           detail: 'The Idol tears open the Rift on the eastern edge of town',
           done: !!r.get('idolClaimed'),
         },
@@ -64,7 +71,12 @@ export function buildJournal(r) {
           done: gatesIn(1) >= 3,
         },
         {
-          text: 'Claim the Sun Crown at the Frozen Throne',
+          text: 'Defeat the Frozen Warden at the Throne',
+          detail: 'It regrows an ice shell — break it fast, the Fire Pick bites twice as deep',
+          done: beaten.includes('warden'),
+        },
+        {
+          text: 'Claim the Sun Crown',
           detail: 'The Crown burns open the Ember Rift on the western edge',
           done: !!r.get('crownClaimed'),
         },
@@ -96,7 +108,12 @@ export function buildJournal(r) {
           done: gatesIn(2) >= 3,
         },
         {
-          text: 'Tear the Heart of the Volcano from the Inferno Deep',
+          text: "Defeat the Volcano's Heart in the Inferno Deep",
+          detail: 'It floods the floor with lava — the Water Gun scalds it and cools the fire',
+          done: beaten.includes('core'),
+        },
+        {
+          text: 'Tear out the Heart of the Volcano',
           detail: 'The last treasure in the world',
           done: !!r.get('heartClaimed'),
         },

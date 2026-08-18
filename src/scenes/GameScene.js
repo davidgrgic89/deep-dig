@@ -814,10 +814,7 @@ export default class GameScene extends Phaser.Scene {
       const p = this.portals[i];
       if (near(p.x, p.y - 10, 20)) {
         hint = 'E — use portal';
-        if (input.interactPressed) {
-          this.uiOpen = true;
-          this.game.events.emit('portal:open', { portals: this.portals.map((q) => q.name), from: i });
-        }
+        if (input.interactPressed) this.openPortalMenu(p);
       }
     }
     // shrines
@@ -1731,8 +1728,26 @@ export default class GameScene extends Phaser.Scene {
     this.save();
   }
 
+  // The travel menu only ever lists places you've actually opened up: the two
+  // far towns stay off it until their rift is unlocked, so you can't warp into
+  // Frosthaven or Cinder Reach before earning the way in.
+  reachablePortals() {
+    const openRegion = [true, !!this.registry.get('rightUnlocked'), !!this.registry.get('lavaUnlocked')];
+    return this.portals.filter((p, i) => (i < 3 ? openRegion[i] : true));
+  }
+
+  openPortalMenu(here) {
+    this.portalMenu = this.reachablePortals();
+    this.uiOpen = true;
+    this.game.events.emit('portal:open', {
+      portals: this.portalMenu.map((q) => q.name),
+      from: this.portalMenu.indexOf(here),
+    });
+  }
+
   teleportTo(idx) {
-    const p = this.portals[idx];
+    const list = this.portalMenu || this.reachablePortals();
+    const p = list[idx];
     if (!p) return;
     Sfx.teleport();
     this.cameras.main.flash(200, 120, 200, 255);

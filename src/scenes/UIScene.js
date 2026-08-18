@@ -94,6 +94,7 @@ export default class UIScene extends Phaser.Scene {
     this.input.keyboard.on('keydown', (ev) => this.handleKey(ev));
     this.input.keyboard.on('keydown-P', () => { if (!this.mode) this.togglePause(); });
     this.buildTouchControls();
+    this.installBackButtonHandler();
     this.refreshHud();
   }
 
@@ -171,6 +172,7 @@ export default class UIScene extends Phaser.Scene {
     };
     paint();
     zone.on('pointerdown', () => {
+      if (this.mode) return;            // a panel is on top of this icon
       if (this.scale.isFullscreen) this.scale.stopFullscreen();
       else this.scale.startFullscreen();
       Sfx.select();
@@ -189,7 +191,7 @@ export default class UIScene extends Phaser.Scene {
     icon.fillStyle(0xf2e6c9, 0.9);
     icon.fillRect(bx - 6, by - 7, 4, 14);
     icon.fillRect(bx + 2, by - 7, 4, 14);
-    zone.on('pointerdown', () => this.togglePause());
+    zone.on('pointerdown', () => { if (!this.mode) this.togglePause(); });
   }
 
   // MAP / QUESTS taps, sitting alongside the pause + fullscreen icons so phone
@@ -228,6 +230,7 @@ export default class UIScene extends Phaser.Scene {
   pauseGame() {
     if (this.paused) return;
     this.paused = true;
+    this.pushNavGuard();   // so the Android back button resumes instead of leaving
     Sfx.pauseAudio();
     // release any held touch input so nothing lingers on resume
     const t = this.registry.get('touch');
@@ -244,6 +247,7 @@ export default class UIScene extends Phaser.Scene {
     this.pauseBg.disableInteractive();
     if (this.scene.isPaused('Game')) this.scene.resume('Game');
     Sfx.resumeAudio();
+    if (!this.mode) this.popNavGuard();   // a panel underneath keeps the guard
   }
 
   setControlsVisible(v) {
@@ -428,9 +432,61 @@ export default class UIScene extends Phaser.Scene {
     this.mode = null;
   }
 
+  // Every panel opens through here, so the Android back-button guard can never
+  // be forgotten when a new panel type is added.
+  beginPanel(mode) {
+    this.clearPanel();
+    this.mode = mode;
+    this.pushNavGuard();
+  }
+
   closePanel() {
+    this.popNavGuard();
     this.clearPanel();
     this.game.events.emit('ui:closed');
+  }
+
+  // ---- hardware / browser back button ----------------------------------
+  // On Android the system back button would otherwise leave the game entirely.
+  // While a panel is open we hold one history entry, so back closes the panel
+  // instead — the same thing the on-screen X does.
+  installBackButtonHandler() {
+    this.navGuard = false;
+    this._onPopState = () => {
+      this.navGuard = false;          // the entry we pushed is already gone
+      if (this.mode) { Sfx.select(); this.closePanel(); }
+      else if (this.paused) this.resumeGame();
+    };
+    window.addEventListener('popstate', this._onPopState);
+    this.events.once('shutdown', () => window.removeEventListener('popstate', this._onPopState));
+  }
+
+  pushNavGuard() {
+    if (this.navGuard) return;        // one entry is enough, however deep we go
+    this.navGuard = true;
+    try { history.pushState({ ddPanel: true }, ''); } catch { this.navGuard = false; }
+  }
+
+  popNavGuard() {
+    if (!this.navGuard) return;
+    this.navGuard = false;
+    try { history.back(); } catch { /* nothing to go back to */ }
+  }
+
+  // A visible way out of every panel. Touch players had no discoverable close
+  // control at all — tapping the JUMP pad worked, but nothing said so.
+  addCloseButton(x, y) {
+    // Nothing else in the panel is interactive, so this button owns every tap
+    // it covers. The HUD icons underneath refuse taps while a panel is open.
+    const btn = this.add.rectangle(x, y, 30, 30, 0x3a2410, 0.95)
+      .setStrokeStyle(2, 0xc08618).setDepth(90).setInteractive({ useHandCursor: true });
+    const glyph = this.add.text(x, y, 'X', TXT(11, '#f2d75c')).setOrigin(0.5).setDepth(91);
+    btn.on('pointerover', () => btn.setFillStyle(0x5c3a18, 0.95));
+    btn.on('pointerout', () => btn.setFillStyle(0x3a2410, 0.95));
+    // pointerup, not pointerdown: a tap that opened the panel can't close it too
+    btn.on('pointerup', () => this.menuCancel());
+    this.panel.add([btn, glyph]);
+    return btn;
   }
 
   panelBox(w, h, title) {
@@ -441,13 +497,13 @@ export default class UIScene extends Phaser.Scene {
     const t = this.add.text(x, y - h / 2 + 22, title, TXT(13, '#f2d75c')).setOrigin(0.5);
     this.panel.add([bg, bg2, t]);
     this.panel.setVisible(true);
+    this.addCloseButton(x + w / 2 - 24, y - h / 2 + 24);
     return { x, y, w, h };
   }
 
   // ---- dialog -----------------------------------------------------------
   showDialog({ name, lines }) {
-    this.clearPanel();
-    this.mode = 'dialog';
+    this.beginPanel('dialog');
     const { width: SW, height: SH } = this.scale;
     const w = Math.min(680, SW - 80), h = 130;
     const x = SW / 2, y = SH - h / 2 - 24;
@@ -458,12 +514,12 @@ export default class UIScene extends Phaser.Scene {
     const hintT = this.add.text(x + w / 2 - 14, y + h / 2 - 18, 'E / ESC', TXT(8, '#b8b09a')).setOrigin(1, 0);
     this.panel.add([bg, nm, body, hintT]);
     this.panel.setVisible(true);
+    this.addCloseButton(x + w / 2 - 22, y - h / 2 + 20);
   }
 
   // ---- shop -------------------------------------------------------------
   showShop(stock) {
-    this.clearPanel();
-    this.mode = 'shop';
+    this.beginPanel('shop');
     this.stock = stock;
     this.sel = Math.min(this.sel || 0, stock.length - 1);
     const rows = stock.length;
@@ -508,8 +564,7 @@ export default class UIScene extends Phaser.Scene {
 
   // ---- portals ----------------------------------------------------------
   showPortals({ portals, from }) {
-    this.clearPanel();
-    this.mode = 'portal';
+    this.beginPanel('portal');
     this.portalList = portals;
     this.sel = 0;
     const { x, y, h } = this.panelBox(480, 110 + portals.length * 26, 'PORTAL NETWORK');
@@ -535,8 +590,7 @@ export default class UIScene extends Phaser.Scene {
 
   // ---- museum of relics -------------------------------------------------
   showMuseum({ items }) {
-    this.clearPanel();
-    this.mode = 'museum';
+    this.beginPanel('museum');
     const foundCount = items.filter((i) => i.found).length;
     const cols = 4, cellW = 116, cellH = 88;
     const w = cols * cellW + 92, h = 3 * cellH + 104;
@@ -576,8 +630,7 @@ export default class UIScene extends Phaser.Scene {
   // Full-screen panel: the tile map blown up 2x, a depth ruler down the left,
   // landmark pins, and a blinking dot for you.
   showMap(data) {
-    this.clearPanel();
-    this.mode = 'map';
+    this.beginPanel('map');
     const { width: SW, height: SH } = this.scale;
     const S = 2;                                    // screen px per world tile
     renderMapTexture(this, 'mapview', data.tiles, data.explored);
@@ -653,12 +706,12 @@ export default class UIScene extends Phaser.Scene {
     const foot = this.add.text(SW / 2, SH - 5, 'TAB / ESC — close      Q — quest journal',
       TXT(8, '#b8b09a')).setOrigin(0.5, 1);
     this.panel.add(foot);
+    this.addCloseButton(SW - 28, 28);
   }
 
   // ---- quest journal ----------------------------------------------------
   showJournal(data) {
-    this.clearPanel();
-    this.mode = 'journal';
+    this.beginPanel('journal');
     const { width: SW, height: SH } = this.scale;
     const BOXW = 720;
     const bg = this.add.rectangle(SW / 2, SH / 2, SW, SH, 0x07060e, 0.97);
@@ -710,12 +763,12 @@ export default class UIScene extends Phaser.Scene {
     title.setY(boxTop + 22);
     content.setPosition(SW / 2 - BOXW / 2 + 24, boxTop + 44);
     foot.setY(boxTop + boxH - 20);
+    this.addCloseButton(SW / 2 + BOXW / 2 - 24, boxTop + 24);
   }
 
   // ---- win --------------------------------------------------------------
   showWin({ coins, orbs }) {
-    this.clearPanel();
-    this.mode = 'won';
+    this.beginPanel('won');
     const { x, y, h } = this.panelBox(660, 300, 'THE HEART OF THE VOLCANO');
     const body = this.add.text(x, y - 30,
       'You tear the molten Heart from the Inferno Deep.\n\n' +
